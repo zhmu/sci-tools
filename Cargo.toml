@@ -1,0 +1,16 @@
+[package]
+name = "scitools"
+version = "0.1.0"
+authors = ["Rink Springer <rink@rink.nu>"]
+edition = "2018"
+
+[dependencies]
+bmp = "0.5.0"
+num_enum = "0.5.1"
+log = "0.4.14"
+env_logger = "0.8.2"
+packed_struct = "0.5"
+phf = { version = "0.8.0", features = ["macros"] }
+byteorder = "1"
+petgraph = "0.5.1"
+indexmap = "1.6.2"
