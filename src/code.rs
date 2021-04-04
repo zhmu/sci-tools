@@ -4,14 +4,22 @@ use crate::{script, intermediate};
 
 #[derive(Clone,Debug)]
 pub struct CodeFragment {
-    pub offset: usize, // absolute (not relative to script base)
-    pub length: usize,
     pub instructions: Vec<intermediate::Instruction>,
 }
 
 impl CodeFragment {
+    pub fn get_start_offset(&self) -> usize {
+        let ii = self.instructions.first().unwrap();
+        ii.offset
+    }
+
+    pub fn get_end_offset(&self) -> usize {
+        let ii = self.instructions.last().unwrap();
+        ii.offset + ii.length
+    }
+
     pub fn as_str(&self) -> String {
-        format!("{:x}..{:x}", self.offset, self.offset + self.length)
+        format!("{:x}..{:x}", self.get_start_offset(), self.get_end_offset())
     }
 }
 

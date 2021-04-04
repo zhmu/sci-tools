@@ -155,7 +155,6 @@ fn split_instructions_from_block(block: &mut CodeBlock, offset: usize) -> Vec<in
 fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &LabelMap) -> Vec<CodeBlock<'a>> {
     let mut blocks: Vec<CodeBlock> = Vec::new();
     let disasm = disassemble::Disassembler::new(&script_block, 0);
-    let mut current_block_offset: usize = script_block.base;
     let mut block_offsets: HashSet<usize> = HashSet::new();
 
     // Split on specific instruction
@@ -163,13 +162,9 @@ fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &Labe
     for ins in disasm {
         instructions.push(intermediate::convert_instruction(&ins));
         let ii = instructions.last().unwrap().clone();
-
         if !must_split(&ii) { continue; }
-        let next_offset = ii.offset + ii.length;
-        let length = next_offset - current_block_offset;
 
-        let mut block = CodeBlock::new(&script_block, code::CodeFragment{ offset: current_block_offset, length, instructions: instructions.drain(..).collect() });
-
+        let mut block = CodeBlock::new(&script_block, code::CodeFragment{ instructions: instructions.drain(..).collect() });
         if let Some(next_offset) = is_unconditional_branch(&ii) {
             block.branch_index_always = OffsetIndex::Offset(next_offset);
         } else if let Some((true_offset, next_offset)) = is_conditional_branch(&ii) {
@@ -177,10 +172,9 @@ fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &Labe
             block.branch_index_false = OffsetIndex::Offset(next_offset);
         }
 
-        let block_offset = block.code.offset;
+        let block_offset = block.code.get_start_offset();
         blocks.push(block);
         block_offsets.insert(block_offset);
-        current_block_offset = next_offset;
     }
 
     // Sometimes a lone 'bnot.w' (0) is added to the instructions; this is the
@@ -192,32 +186,32 @@ fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &Labe
     }
 
     // Ensure all block_offsets are split
-    for (offset, _label) in labels {
+    for (offset, _) in labels {
         if block_offsets.contains(offset) { continue; }
         let offset = *offset;
         for (n, block) in &mut blocks.iter_mut().enumerate() {
-            if offset >= block.code.offset && offset < block.code.offset + block.code.length {
-                let instructions = split_instructions_from_block(block, offset);
-                let mut new_block = CodeBlock::new(&script_block, code::CodeFragment{ offset, length: block.code.length - (offset - block.code.offset), instructions });
-                block.code.length = offset - block.code.offset;
-                // Move branches to new block
-                new_block.branch_index_true = block.branch_index_true;
-                new_block.branch_index_false = block.branch_index_false;
-                new_block.branch_index_always = block.branch_index_always;
-                // Ensure the previous block unconditionally branches to the new one
-                block.branch_index_true = OffsetIndex::None;
-                block.branch_index_false = OffsetIndex::None;
-                block.branch_index_always = OffsetIndex::Offset(offset);
+            if offset < block.code.get_start_offset() { continue; }
+            if offset >= block.code.get_end_offset() { continue; }
 
-                blocks.insert(n + 1, new_block);
-                break;
-            }
+            let instructions = split_instructions_from_block(block, offset);
+            let mut new_block = CodeBlock::new(&script_block, code::CodeFragment{ instructions });
+            // Move branches to new block
+            new_block.branch_index_true = block.branch_index_true;
+            new_block.branch_index_false = block.branch_index_false;
+            new_block.branch_index_always = block.branch_index_always;
+            // Ensure the previous block unconditionally branches to the new one
+            block.branch_index_true = OffsetIndex::None;
+            block.branch_index_false = OffsetIndex::None;
+            block.branch_index_always = OffsetIndex::Offset(offset);
+
+            blocks.insert(n + 1, new_block);
+            break;
         }
     }
 
     let mut offset_to_index: HashMap<usize, usize> = HashMap::new();
     for (n, block) in blocks.iter().enumerate() {
-        offset_to_index.insert(block.code.offset, n);
+        offset_to_index.insert(block.code.get_start_offset(), n);
     }
 
     // Rewrite offsets to indices
@@ -273,7 +267,9 @@ fn plot_graph(fname: &str, graph: &code::CodeGraph) -> Result<(), std::io::Error
         label = format!("{}", graph.to_index(node.id()));
         if let Some(code) = is_single_execute(weight) {
             shape = "oval";
-            label += format!(" [{:x}..{:x}]", code.offset, code.offset + code.length).as_str();
+            let start_offset = code.get_start_offset();
+            let end_offset = code.get_end_offset();
+            label += format!(" [{:x}..{:x}]", start_offset, end_offset).as_str();
         } else {
             shape = "box";
             for o in &weight.ops {
