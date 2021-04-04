@@ -1,7 +1,7 @@
 extern crate scitools;
 
-use scitools::{disassemble, script, vocab, said, object_class, graph_lib, reduce, code, intermediate, execute};
-use std::collections::{HashMap, HashSet};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, intermediate, execute, split, label};
+use std::collections::HashMap;
 use std::io::Write;
 use std::env;
 use std::fs::File;
@@ -9,11 +9,6 @@ use std::fs::File;
 use petgraph::graph::NodeIndex;
 use petgraph::algo::kosaraju_scc;
 use petgraph::{Incoming, Outgoing};
-use petgraph::visit::{NodeRef, EdgeRef};
-use petgraph::visit::NodeIndexable;
-use petgraph::visit::IntoNodeReferences;
-
-type LabelMap = HashMap<usize, String>;
 
 const DEBUG_VM: bool = false;
 
@@ -48,205 +43,6 @@ impl From<object_class::ObjectClassError> for ScriptError {
        ScriptError::ObjectClassError(error)
     }
 }
-
-fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
-    let disasm = disassemble::Disassembler::new(&block, 0);
-    for ins in disasm {
-        let ii = intermediate::convert_instruction(&ins);
-        let ic = ii.ops.last().unwrap();
-        match ic {
-            intermediate::IntermediateCode::Call(addr, _) => {
-                let label = format!("local_{:x}", addr);
-                labels.insert(*addr, label);
-            },
-            intermediate::IntermediateCode::BranchAlways(addr) | intermediate::IntermediateCode::BranchTrue(addr, _, _) | intermediate::IntermediateCode::BranchFalse(addr, _,  _) => {
-                let label = format!("local_{:x}", addr);
-                labels.insert(*addr, label);
-            },
-            _ => { }
-        }
-    }
-}
-
-fn find_code_labels(script: &script::Script) -> Result<LabelMap, ScriptError> {
-    let mut labels: LabelMap = LabelMap::new();
-    for block in &script.blocks {
-        match block.r#type {
-            script::BlockType::Code => {
-                generate_code_labels(&block, &mut labels);
-            },
-            _ => { }
-        };
-    }
-    Ok(labels)
-}
-
-fn fill_out_index(offset_index: &mut code::OffsetIndex, offset_to_index: &HashMap<usize, usize>) -> () {
-    match offset_index {
-        code::OffsetIndex::Offset(offset) => {
-            match offset_to_index.get(offset) {
-                Some(index) => { *offset_index = code::OffsetIndex::Index(*index) },
-                None => { panic!("offset {:x} not found", offset) }
-            }
-        },
-        code::OffsetIndex::None => { },
-        _ => { panic!("not an offset?"); }
-    }
-}
-
-fn is_unconditional_branch(ii: &intermediate::Instruction) -> Option<usize> {
-    let ic = ii.ops.last().unwrap();
-    return match ic {
-        intermediate::IntermediateCode::BranchAlways(a) => { Some(*a) },
-        _ => { None }
-    }
-}
-
-fn is_conditional_branch(ii: &intermediate::Instruction) -> Option<(usize, usize)> {
-    let ic = ii.ops.last().unwrap();
-    return match ic {
-        intermediate::IntermediateCode::BranchTrue(a, b, _) => { Some((*a, *b)) },
-        intermediate::IntermediateCode::BranchFalse(a, b, _) => { Some((*a, *b)) },
-        _ => { None }
-    }
-}
-
-fn must_split(ii: &intermediate::Instruction) -> bool {
-    let ic = ii.ops.last().unwrap();
-    return match ic {
-        intermediate::IntermediateCode::BranchAlways(_) => { true },
-        intermediate::IntermediateCode::BranchTrue(_, _, _) => { true },
-        intermediate::IntermediateCode::BranchFalse(_, _, _) => { true },
-        intermediate::IntermediateCode::Return() => { true },
-        _ => { false }
-    }
-}
-
-fn split_instructions_from_block(block: &mut code::CodeBlock, offset: usize) -> Vec<intermediate::Instruction> {
-    for (n, ii) in block.code.instructions.iter().enumerate() {
-        if ii.offset == offset {
-            return block.code.instructions.drain(n..).collect();
-        }
-    }
-    unreachable!();
-}
-
-fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &LabelMap) -> Vec<code::CodeBlock<'a>> {
-    let mut blocks: Vec<code::CodeBlock> = Vec::new();
-    let disasm = disassemble::Disassembler::new(&script_block, 0);
-    let mut block_offsets: HashSet<usize> = HashSet::new();
-
-    // Split on specific instruction
-    let mut instructions: Vec<intermediate::Instruction> = Vec::new();
-    for ins in disasm {
-        instructions.push(intermediate::convert_instruction(&ins));
-        let ii = instructions.last().unwrap().clone();
-        if !must_split(&ii) { continue; }
-
-        let mut block = code::CodeBlock::new(&script_block, code::CodeFragment{ instructions: instructions.drain(..).collect() });
-        if let Some(next_offset) = is_unconditional_branch(&ii) {
-            block.branch_index_always = code::OffsetIndex::Offset(next_offset);
-        } else if let Some((true_offset, next_offset)) = is_conditional_branch(&ii) {
-            block.branch_index_true = code::OffsetIndex::Offset(true_offset);
-            block.branch_index_false = code::OffsetIndex::Offset(next_offset);
-        }
-
-        let block_offset = block.code.get_start_offset();
-        blocks.push(block);
-        block_offsets.insert(block_offset);
-    }
-
-    // Sometimes a lone 'bnot.w' (0) is added to the instructions; this is the
-    // only unprocessed instructions block we will accept
-    if !instructions.is_empty() {
-        assert_eq!(instructions.len(), 1);
-        let ii = instructions.first().unwrap();
-        assert_eq!(script_block.data[ii.offset - script_block.base], 0x00);
-    }
-
-    // Ensure all block_offsets are split
-    for (offset, _) in labels {
-        if block_offsets.contains(offset) { continue; }
-        let offset = *offset;
-        for (n, block) in &mut blocks.iter_mut().enumerate() {
-            if offset < block.code.get_start_offset() { continue; }
-            if offset >= block.code.get_end_offset() { continue; }
-
-            let instructions = split_instructions_from_block(block, offset);
-            let mut new_block = code::CodeBlock::new(&script_block, code::CodeFragment{ instructions });
-            // Move branches to new block
-            new_block.branch_index_true = block.branch_index_true;
-            new_block.branch_index_false = block.branch_index_false;
-            new_block.branch_index_always = block.branch_index_always;
-            // Ensure the previous block unconditionally branches to the new one
-            block.branch_index_true = code::OffsetIndex::None;
-            block.branch_index_false = code::OffsetIndex::None;
-            block.branch_index_always = code::OffsetIndex::Offset(offset);
-
-            blocks.insert(n + 1, new_block);
-            break;
-        }
-    }
-
-    let mut offset_to_index: HashMap<usize, usize> = HashMap::new();
-    for (n, block) in blocks.iter().enumerate() {
-        offset_to_index.insert(block.code.get_start_offset(), n);
-    }
-
-    // Rewrite offsets to indices
-    for block in &mut blocks {
-       fill_out_index(&mut block.branch_index_always, &offset_to_index);
-       fill_out_index(&mut block.branch_index_true, &offset_to_index);
-       fill_out_index(&mut block.branch_index_false, &offset_to_index);
-    }
-
-    blocks
-}
-
-fn is_single_execute<'a>(node: &'a code::CodeNode) -> Option<&'a code::CodeFragment> {
-    if node.ops.len() == 1 {
-        if let code::Operation::Execute(code) = node.ops.first().unwrap() {
-            return Some(code)
-        }
-    }
-    None
-}
-
-fn plot_graph(fname: &str, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
-    let mut out_file = File::create(fname).unwrap();
-    writeln!(out_file, "digraph G {{")?;
-    for node in graph.node_references() {
-        let shape: &str;
-        let mut label: String;
-        let weight = node.weight();
-        label = format!("{}", graph.to_index(node.id()));
-        if let Some(code) = is_single_execute(weight) {
-            shape = "oval";
-            let start_offset = code.get_start_offset();
-            let end_offset = code.get_end_offset();
-            label += format!(" [{:x}..{:x}]", start_offset, end_offset).as_str();
-        } else {
-            shape = "box";
-            for o in &weight.ops {
-                label += format!(" {}", o.as_str()).as_str();
-            }
-        }
-        writeln!(out_file, "  {} [ label=\"{}\" shape=\"{}\"]", graph.to_index(node.id()), label, shape)?;
-    }
-    for edge in graph.edge_references() {
-        let e = edge.weight();
-        let colour: &str;
-        match e.branch {
-            code::Branch::True => { colour = "green"; },
-            code::Branch::False => { colour = "red"; },
-            code::Branch::Always => { colour = "black"; },
-        }
-        writeln!(out_file, "  {} -> {} [ color={} ]", graph.to_index(edge.source()), graph.to_index(edge.target()), colour)?;
-    }
-    writeln!(out_file, "}}")?;
-    Ok(())
-}
-
 
 #[derive(Debug)]
 struct LoopNode {
@@ -355,7 +151,7 @@ fn convert_ops_to_ic(ops: &Vec<code::Operation>) -> Vec<intermediate::Instructio
     result
 }
 
-fn write_code(fname: &str, block: &script::ScriptBlock, _labels: &LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_code(fname: &str, block: &script::ScriptBlock, _labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     let mut out_file = File::create(fname).unwrap();
     writeln!(out_file, "// Block at {:x}", block.base)?;
 
@@ -408,7 +204,7 @@ fn main() -> Result<(), ScriptError> {
 
     let script = script::Script::new(script_id, &script_data)?;
 
-    let labels = find_code_labels(&script)?;
+    let labels = label::find_code_labels(&script);
 
     for block in &script.blocks {
         if let Some(base) = script_base_offset {
@@ -416,16 +212,16 @@ fn main() -> Result<(), ScriptError> {
         }
         match block.r#type {
             script::BlockType::Code => {
-                let code_blocks = split_code_in_blocks(&block, &labels);
+                let code_blocks = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&code_blocks);
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
-                plot_graph(&out_fname, &graph)?;
+                code::plot_graph(&out_fname, &graph)?;
 
                 reduce::reduce_graph(&mut graph);
                 analyse_graph(&graph);
 
                 let out_fname = format!("dot/{:x}.dot", block.base);
-                plot_graph(&out_fname, &graph)?;
+                code::plot_graph(&out_fname, &graph)?;
 
                 let out_fname = format!("tmp/{:x}.txt", block.base);
                 write_code(&out_fname, &block, &labels, &graph)?;

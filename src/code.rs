@@ -1,5 +1,10 @@
 use petgraph::graph::Graph;
+use petgraph::visit::{NodeRef, EdgeRef, IntoNodeReferences};
+use petgraph::visit::NodeIndexable;
+
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
 
 use crate::{script, intermediate};
 
@@ -125,4 +130,49 @@ pub fn create_graph_from_codeblocks<'a>(blocks: &'a Vec<CodeBlock<'a>>) -> CodeG
 
     graph
 }
+
+fn is_single_execute<'a>(node: &'a CodeNode) -> Option<&'a CodeFragment> {
+    if node.ops.len() == 1 {
+        if let Operation::Execute(code) = node.ops.first().unwrap() {
+            return Some(code)
+        }
+    }
+    None
+}
+
+pub fn plot_graph(fname: &str, graph: &CodeGraph) -> Result<(), std::io::Error> {
+    let mut out_file = File::create(fname).unwrap();
+    writeln!(out_file, "digraph G {{")?;
+    for node in graph.node_references() {
+        let shape: &str;
+        let mut label: String;
+        let weight = node.weight();
+        label = format!("{}", graph.to_index(node.id()));
+        if let Some(code) = is_single_execute(weight) {
+            shape = "oval";
+            let start_offset = code.get_start_offset();
+            let end_offset = code.get_end_offset();
+            label += format!(" [{:x}..{:x}]", start_offset, end_offset).as_str();
+        } else {
+            shape = "box";
+            for o in &weight.ops {
+                label += format!(" {}", o.as_str()).as_str();
+            }
+        }
+        writeln!(out_file, "  {} [ label=\"{}\" shape=\"{}\"]", graph.to_index(node.id()), label, shape)?;
+    }
+    for edge in graph.edge_references() {
+        let e = edge.weight();
+        let colour: &str;
+        match e.branch {
+            Branch::True => { colour = "green"; },
+            Branch::False => { colour = "red"; },
+            Branch::Always => { colour = "black"; },
+        }
+        writeln!(out_file, "  {} -> {} [ color={} ]", graph.to_index(edge.source()), graph.to_index(edge.target()), colour)?;
+    }
+    writeln!(out_file, "}}")?;
+    Ok(())
+}
+
 
