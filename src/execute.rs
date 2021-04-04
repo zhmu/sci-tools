@@ -238,7 +238,7 @@ impl VM {
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
             },
-            intermediate::IntermediateCode::BranchFalse(expr) => {
+            intermediate::IntermediateCode::BranchFalse(_, _, expr) => {
                 let expr = simplify_expr(&mut self.state, expr);
                 if let BranchIf::Never = self.branch {
                     self.branch = BranchIf::False(expr.clone());
@@ -246,7 +246,7 @@ impl VM {
                     panic!();
                 }
             }
-            intermediate::IntermediateCode::BranchTrue(expr) => {
+            intermediate::IntermediateCode::BranchTrue(_, _, expr) => {
                 let expr = simplify_expr(&mut self.state, expr);
                 if let BranchIf::Never = self.branch {
                     self.branch = BranchIf::True(expr.clone());

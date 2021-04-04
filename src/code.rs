@@ -1,11 +1,12 @@
 use petgraph::graph::Graph;
 
-use crate::{script};
+use crate::{script, intermediate};
 
 #[derive(Clone,Debug)]
 pub struct CodeFragment {
     pub offset: usize, // absolute (not relative to script base)
     pub length: usize,
+    pub instructions: Vec<intermediate::Instruction>,
 }
 
 impl CodeFragment {

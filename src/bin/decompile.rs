@@ -52,15 +52,18 @@ impl From<object_class::ObjectClassError> for ScriptError {
 fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
     let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
-        if is_call(&ins) {
-            let j_offset = script::relpos0_to_absolute_offset(&ins);
-            let label = format!("local_{:x}", j_offset);
-            labels.insert(j_offset, label);
-        }
-        if is_unconditional_branch(&ins) || is_conditional_branch(&ins) {
-            let j_offset = script::relpos0_to_absolute_offset(&ins);
-            let label = format!("local_{:x}", j_offset);
-            labels.insert(j_offset, label);
+        let ii = intermediate::convert_instruction(&ins);
+        let ic = ii.ops.last().unwrap();
+        match ic {
+            intermediate::IntermediateCode::Call(addr, _) => {
+                let label = format!("local_{:x}", addr);
+                labels.insert(*addr, label);
+            },
+            intermediate::IntermediateCode::BranchAlways(addr) | intermediate::IntermediateCode::BranchTrue(addr, _, _) | intermediate::IntermediateCode::BranchFalse(addr, _,  _) => {
+                let label = format!("local_{:x}", addr);
+                labels.insert(*addr, label);
+            },
+            _ => { }
         }
     }
 }
@@ -78,43 +81,9 @@ fn find_code_labels(script: &script::Script) -> Result<LabelMap, ScriptError> {
     Ok(labels)
 }
 
-fn is_always_branch(ins: &disassemble::Instruction) -> bool {
-    let opcode = ins.bytes[0];
-    match opcode {
-        0x40 | 0x41 /* call */ => { return true },
-        //0x42 | 0x43 /* callk */ => { return true },
-        //0x44 | 0x45 /* callb */ => { return true },
-        //0x46 | 0x47 /* calle */ => { return true },
-        0x48 | 0x49 /* ret */ => { return true },
-        _ => { return false }
-    }
-}
-
-fn is_call(ins: &disassemble::Instruction) -> bool {
-    let opcode = ins.bytes[0];
-    opcode == 0x40 || opcode == 0x41 /* call */
-}
-
-fn is_unconditional_branch(ins: &disassemble::Instruction) -> bool {
-    let opcode = ins.bytes[0];
-    opcode == 0x32 || opcode == 0x33 /* jmp */
-}
-
-fn is_return(ins: &disassemble::Instruction) -> bool {
-    let opcode = ins.bytes[0];
-    opcode == 0x48 || opcode == 0x49 /* ret */
-}
-
-fn is_conditional_branch(ins: &disassemble::Instruction) -> bool {
-    let opcode = ins.bytes[0];
-    match opcode {
-        0x2e | 0x2f /* bt */ => { return true },
-        0x30 | 0x31 /* bnt */ => { return true },
-        _ => { return false }
-    }
-}
-
+#[derive(Copy,Clone)]
 enum OffsetIndex {
+    None,
     Offset(usize),
     Index(usize),
 }
@@ -122,33 +91,65 @@ enum OffsetIndex {
 struct CodeBlock<'a> {
     script: &'a script::ScriptBlock<'a>,
     code: code::CodeFragment,
-    branch_index_always: Option<OffsetIndex>,
-    branch_index_true: Option<OffsetIndex>,
-    branch_index_false: Option<OffsetIndex>,
+    branch_index_always: OffsetIndex,
+    branch_index_true: OffsetIndex,
+    branch_index_false: OffsetIndex,
 }
 
 impl<'a> CodeBlock<'a> {
     fn new(script: &'a script::ScriptBlock, code: code::CodeFragment) -> CodeBlock<'a> {
-        CodeBlock{ script, code, branch_index_always: None, branch_index_true: None, branch_index_false: None }
+        CodeBlock{ script, code, branch_index_always: OffsetIndex::None, branch_index_true: OffsetIndex::None, branch_index_false: OffsetIndex::None }
     }
 }
 
-fn fill_out_index(offset_index: &mut Option<OffsetIndex>, offset_to_index: &HashMap<usize, usize>) -> () {
-    if let Some(oi) = offset_index {
-        match oi {
-            OffsetIndex::Offset(offset) => {
-                match offset_to_index.get(offset) {
-                    Some(index) => { *oi = OffsetIndex::Index(*index) },
-                    None => { panic!("offset {:x} not found", offset) }
-                }
-            },
-            _ => { panic!("not an offset?"); }
+fn fill_out_index(offset_index: &mut OffsetIndex, offset_to_index: &HashMap<usize, usize>) -> () {
+    match offset_index {
+        OffsetIndex::Offset(offset) => {
+            match offset_to_index.get(offset) {
+                Some(index) => { *offset_index = OffsetIndex::Index(*index) },
+                None => { panic!("offset {:x} not found", offset) }
+            }
+        },
+        OffsetIndex::None => { },
+        _ => { panic!("not an offset?"); }
+    }
+}
+
+fn is_unconditional_branch(ii: &intermediate::Instruction) -> Option<usize> {
+    let ic = ii.ops.last().unwrap();
+    return match ic {
+        intermediate::IntermediateCode::BranchAlways(a) => { Some(*a) },
+        _ => { None }
+    }
+}
+
+fn is_conditional_branch(ii: &intermediate::Instruction) -> Option<(usize, usize)> {
+    let ic = ii.ops.last().unwrap();
+    return match ic {
+        intermediate::IntermediateCode::BranchTrue(a, b, _) => { Some((*a, *b)) },
+        intermediate::IntermediateCode::BranchFalse(a, b, _) => { Some((*a, *b)) },
+        _ => { None }
+    }
+}
+
+fn must_split(ii: &intermediate::Instruction) -> bool {
+    let ic = ii.ops.last().unwrap();
+    return match ic {
+        intermediate::IntermediateCode::BranchAlways(_) => { true },
+        intermediate::IntermediateCode::BranchTrue(_, _, _) => { true },
+        intermediate::IntermediateCode::BranchFalse(_, _, _) => { true },
+        intermediate::IntermediateCode::Return() => { true },
+        _ => { false }
+    }
+}
+
+fn split_instructions_from_block(block: &mut CodeBlock, offset: usize) -> Vec<intermediate::Instruction> {
+    for (n, ii) in block.code.instructions.iter().enumerate() {
+        if ii.offset == offset {
+            return block.code.instructions.drain(n..).collect();
         }
     }
-}
-
-fn must_split(ins: &disassemble::Instruction) -> bool {
-    is_always_branch(&ins) || is_unconditional_branch(&ins) || is_conditional_branch(&ins)
+    unreachable!();
 }
 
 fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &LabelMap) -> Vec<CodeBlock<'a>> {
@@ -158,47 +159,58 @@ fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &Labe
     let mut block_offsets: HashSet<usize> = HashSet::new();
 
     // Split on specific instruction
+    let mut instructions: Vec<intermediate::Instruction> = Vec::new();
     for ins in disasm {
-        if must_split(&ins) {
-            let next_offset = ins.offset + ins.bytes.len();
-            let length = next_offset - current_block_offset;
-            let mut block = CodeBlock::new(&script_block, code::CodeFragment{ offset: current_block_offset, length });
+        instructions.push(intermediate::convert_instruction(&ins));
+        let ii = instructions.last().unwrap().clone();
 
-            if is_always_branch(&ins) || is_unconditional_branch(&ins) {
-                if is_unconditional_branch(&ins) {
-                    let next_offset = script::relpos0_to_absolute_offset(&ins);
-                    block.branch_index_always = Some(OffsetIndex::Offset(next_offset));
-                } else if !is_return(&ins) {
-                    block.branch_index_always = Some(OffsetIndex::Offset(next_offset));
-                }
-            } else if is_conditional_branch(&ins) {
-                let true_offset = script::relpos0_to_absolute_offset(&ins);
-                block.branch_index_true = Some(OffsetIndex::Offset(true_offset));
-                block.branch_index_false = Some(OffsetIndex::Offset(next_offset));
-            }
+        if !must_split(&ii) { continue; }
+        let next_offset = ii.offset + ii.length;
+        let length = next_offset - current_block_offset;
 
-            let block_offset = block.code.offset;
-            blocks.push(block);
-            block_offsets.insert(block_offset);
-            current_block_offset = next_offset;
+        let mut block = CodeBlock::new(&script_block, code::CodeFragment{ offset: current_block_offset, length, instructions: instructions.drain(..).collect() });
+
+        if let Some(next_offset) = is_unconditional_branch(&ii) {
+            block.branch_index_always = OffsetIndex::Offset(next_offset);
+        } else if let Some((true_offset, next_offset)) = is_conditional_branch(&ii) {
+            block.branch_index_true = OffsetIndex::Offset(true_offset);
+            block.branch_index_false = OffsetIndex::Offset(next_offset);
         }
+
+        let block_offset = block.code.offset;
+        blocks.push(block);
+        block_offsets.insert(block_offset);
+        current_block_offset = next_offset;
+    }
+
+    // Sometimes a lone 'bnot.w' (0) is added to the instructions; this is the
+    // only unprocessed instructions block we will accept
+    if !instructions.is_empty() {
+        assert_eq!(instructions.len(), 1);
+        let ii = instructions.first().unwrap();
+        assert_eq!(script_block.data[ii.offset - script_block.base], 0x00);
     }
 
     // Ensure all block_offsets are split
     for (offset, _label) in labels {
-        if !block_offsets.contains(offset) {
-            let offset = *offset;
-            for (n, block) in &mut blocks.iter_mut().enumerate() {
-                if offset >= block.code.offset && offset < block.code.offset + block.code.length {
-                    let mut new_block = CodeBlock::new(&script_block, code::CodeFragment{ offset, length: block.code.length - (offset - block.code.offset) });
-                    block.code.length = offset - block.code.offset;
-                    new_block.branch_index_true = block.branch_index_true.take();
-                    new_block.branch_index_false = block.branch_index_false.take();
-                    new_block.branch_index_always = block.branch_index_always.take();
-                    block.branch_index_always = Some(OffsetIndex::Offset(offset));
-                    blocks.insert(n + 1, new_block);
-                    break;
-                }
+        if block_offsets.contains(offset) { continue; }
+        let offset = *offset;
+        for (n, block) in &mut blocks.iter_mut().enumerate() {
+            if offset >= block.code.offset && offset < block.code.offset + block.code.length {
+                let instructions = split_instructions_from_block(block, offset);
+                let mut new_block = CodeBlock::new(&script_block, code::CodeFragment{ offset, length: block.code.length - (offset - block.code.offset), instructions });
+                block.code.length = offset - block.code.offset;
+                // Move branches to new block
+                new_block.branch_index_true = block.branch_index_true;
+                new_block.branch_index_false = block.branch_index_false;
+                new_block.branch_index_always = block.branch_index_always;
+                // Ensure the previous block unconditionally branches to the new one
+                block.branch_index_true = OffsetIndex::None;
+                block.branch_index_false = OffsetIndex::None;
+                block.branch_index_always = OffsetIndex::Offset(offset);
+
+                blocks.insert(n + 1, new_block);
+                break;
             }
         }
     }
@@ -228,20 +240,14 @@ fn create_graph_from_codeblocks<'a>(blocks: &'a Vec<CodeBlock<'a>>) -> code::Cod
     }
 
     for (block_nr, block) in blocks.iter().enumerate() {
-        if let Some(index_offset) = &block.branch_index_always {
-            if let OffsetIndex::Index(index) = index_offset {
-                graph.add_edge(node_map[&block_nr], node_map[index], code::CodeEdge{ branch: code::Branch::Always });
-            }
+        if let OffsetIndex::Index(index) = block.branch_index_always {
+            graph.add_edge(node_map[&block_nr], node_map[&index], code::CodeEdge{ branch: code::Branch::Always });
         }
-        if let Some(index_offset) = &block.branch_index_true {
-            if let OffsetIndex::Index(index) = index_offset {
-                graph.add_edge(node_map[&block_nr], node_map[index], code::CodeEdge{ branch: code::Branch::True });
-            }
+        if let OffsetIndex::Index(index) = block.branch_index_true {
+            graph.add_edge(node_map[&block_nr], node_map[&index], code::CodeEdge{ branch: code::Branch::True });
         }
-        if let Some(index_offset) = &block.branch_index_false {
-            if let OffsetIndex::Index(index) = index_offset {
-                graph.add_edge(node_map[&block_nr], node_map[index], code::CodeEdge{ branch: code::Branch::False });
-            }
+        if let OffsetIndex::Index(index) = block.branch_index_false {
+            graph.add_edge(node_map[&block_nr], node_map[&index], code::CodeEdge{ branch: code::Branch::False });
         }
     }
 
@@ -354,29 +360,17 @@ fn analyse_graph(graph: &code::CodeGraph) {
     }
 }
 
-fn convert_condition_to_ic(script: &script::ScriptBlock, frag: &code::CodeFragment) -> Vec<intermediate::IntermediateCode> {
-    let mut result: Vec<intermediate::IntermediateCode> = Vec::new();
-    let disasm = disassemble::Disassembler::new(&script, frag.offset - script.base);
-    for ins in disasm {
-        if ins.offset + ins.bytes.len() > frag.offset + frag.length { break; }
-
-        let mut ic = intermediate::instruction_to_intermediate_code(&ins);
-        result.append(&mut ic);
-    }
-    result
-}
-
-fn convert_ops_to_ic(script: &script::ScriptBlock, ops: &Vec<code::Operation>) -> Vec<intermediate::IntermediateCode> {
-    let mut result: Vec<intermediate::IntermediateCode> = Vec::new();
+fn convert_ops_to_ic(ops: &Vec<code::Operation>) -> Vec<intermediate::Instruction> {
+    let mut result: Vec<intermediate::Instruction> = Vec::new();
     for op in ops {
         match op {
             code::Operation::IfElse(code, _, _) => {
                 println!("todo IfElse({:?})", code);
-                let mut x: Vec<intermediate::IntermediateCode> = Vec::new();
+                let mut x: Vec<intermediate::Instruction> = Vec::new();
                 for op in code {
                     match op {
                         code::Operation::Execute(frag) => {
-                            x.append(&mut convert_condition_to_ic(script, frag));
+                            x.append(&mut frag.instructions.clone());
                         },
                         _ => { todo!(); }
                     }
@@ -392,7 +386,9 @@ fn convert_ops_to_ic(script: &script::ScriptBlock, ops: &Vec<code::Operation>) -
                 let mut vm = execute::VM::new();
                 for ic in &x {
                     if DEBUG_VM { println!("vm: executing {:?}", ic); }
-                    vm.execute(&ic);
+                    for op in &ic.ops {
+                        vm.execute(&op);
+                    }
                     if DEBUG_VM { println!(">> state is now {}", vm.state); }
                 }
             },
@@ -400,7 +396,7 @@ fn convert_ops_to_ic(script: &script::ScriptBlock, ops: &Vec<code::Operation>) -
                 println!("todo If");
             },
             code::Operation::Execute(frag) => {
-                let mut code = intermediate::convert_codefrag_to_ic(script, frag);
+                let mut code = frag.instructions.clone();
                 result.append(&mut code);
             },
         }
@@ -426,7 +422,7 @@ fn write_code(fname: &str, block: &script::ScriptBlock, _labels: &LabelMap, grap
         //writeln!(out_file, "// Node")?;
         //writeln!(out_file, "{}", s)?;
 
-        let ic = convert_ops_to_ic(block, &node.ops);
+        let ic = convert_ops_to_ic(&node.ops);
         for i in &ic {
             println!("{:?}", i);
         }

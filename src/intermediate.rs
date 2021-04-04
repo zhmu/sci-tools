@@ -1,4 +1,4 @@
-use crate::{disassemble, script, code};
+use crate::{disassemble, script};
 
 #[derive(Debug,Clone)]
 pub enum Operand {
@@ -53,20 +53,28 @@ pub enum Expression {
     Operand(Operand),
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
+    Address(Box<Expression>),
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum IntermediateCode {
     Assign(Expression, Expression),
-    BranchTrue(Expression),
-    BranchFalse(Expression),
-    BranchAlways(),
+    BranchTrue(usize, usize, Expression), // true-offset, false-offset, expr
+    BranchFalse(usize, usize, Expression), // true-offset, false-offset, expr
+    BranchAlways(usize),
     Call(usize, usize),
     KCall(usize, usize),
     CallE(usize, usize, usize),
     Return(),
     Send(Expression, usize),
     Class(usize),
+}
+
+#[derive(Debug,Clone)]
+pub struct Instruction {
+    pub offset: usize,
+    pub length: usize,
+    pub ops: Vec<IntermediateCode>,
 }
 
 fn expr_acc() -> Expression { Expression::Operand(Operand::Acc) }
@@ -142,7 +150,7 @@ fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
     result
 }
 
-pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<IntermediateCode> {
+pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
     let mut result: Vec<IntermediateCode> = Vec::new();
     result.push(IntermediateCode::Assign(expr_pc(), expr_imm(ins.offset + ins.bytes.len())));
     match ins.bytes.first().unwrap() {
@@ -226,13 +234,18 @@ pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<I
             result.append(&mut binary_op_pop_acc(BinaryOp::UnsignedLessOrEqual));
         },
         0x2e | 0x2f => { // bt
-            result.push(IntermediateCode::BranchTrue(expr_acc()));
+            let true_offset = script::relpos0_to_absolute_offset(&ins);
+            let next_offset = ins.offset + ins.bytes.len();
+            result.push(IntermediateCode::BranchTrue(true_offset, next_offset, expr_acc()));
         },
         0x30 | 0x31 => { // bnt
-            result.push(IntermediateCode::BranchFalse(expr_acc()));
+            let true_offset = script::relpos0_to_absolute_offset(&ins);
+            let next_offset = ins.offset + ins.bytes.len();
+            result.push(IntermediateCode::BranchFalse(true_offset, next_offset, expr_acc()));
         },
         0x32 | 0x33 => { // jmp
-            result.push(IntermediateCode::BranchAlways());
+            let next_offset = script::relpos0_to_absolute_offset(&ins);
+            result.push(IntermediateCode::BranchAlways(next_offset));
         },
         0x34 | 0x35 => { // ldi
             result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(Operand::Imm(ins.args[0]))));
@@ -316,8 +329,29 @@ pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<I
             todo!("&rest");
         },
         0x5a | 0x5b => { // lea
-            let _arg = ins.args[0];
-            todo!("lea");
+            let vt = ins.args[0];
+            let vi = ins.args[1];
+            let vtype = (vt >> 1) & 3;
+
+            let op;
+            match vtype {
+                0 => { op = Operand::Global(vi); },
+                1 => { op = Operand::Local(vi); },
+                2 => { op = Operand::Temp(vi); },
+                3 => { op = Operand::Param(vi); },
+                _ => { unreachable!() }
+            }
+
+            let expr;
+            if (vt & 0x10) != 0 {
+                // Add accumulator
+                expr = Expression::Binary(BinaryOp::Add, new_box_expr(op), new_box_acc());
+            } else {
+                expr = Expression::Operand(op);
+            }
+
+            // TODO this needs verification to ensure it is correct
+            result.push(IntermediateCode::Assign(expr_acc(), Expression::Address(Box::new(expr))));
         },
         0x5c | 0x5d => { // selfid
             result.push(IntermediateCode::Assign(expr_acc(), expr_self()));
@@ -392,7 +426,7 @@ pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<I
             let typ = (opcode >> 1) & 3;
             let on_stack = (opcode & 0x8) != 0;
             let acc_modifier = (opcode & 0x10) != 0;
-            let oper = (opcode >> 5) & 3;
+            let mut oper = (opcode >> 5) & 3;
 
             let op;
             match typ {
@@ -412,6 +446,14 @@ pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<I
                        );
             } else {
                 expr = Expression::Operand(op);
+            }
+
+            if oper == 2 { // inc+load
+                result.push(IntermediateCode::Assign(expr.clone(), Expression::Binary(BinaryOp::Add, Box::new(expr.clone()), new_box_imm(1))));
+                oper = 0;
+            } else if oper == 3 { // dec+load
+                result.push(IntermediateCode::Assign(expr.clone(), Expression::Binary(BinaryOp::Subtract, Box::new(expr.clone()), new_box_imm(1))));
+                oper = 0;
             }
 
             match oper {
@@ -434,27 +476,9 @@ pub fn instruction_to_intermediate_code(ins: &disassemble::Instruction) -> Vec<I
                     }
                     result.push(IntermediateCode::Assign(expr, Expression::Operand(source)));
                 },
-                2 => { // inc+load
-                    todo!();
-                },
-                3 => { // dec+load
-                    todo!();
-                },
                 _ => { unreachable!() }
             }
         }
     }
-    result
-}
-
-pub fn convert_codefrag_to_ic(script: &script::ScriptBlock, frag: &code::CodeFragment) -> Vec<IntermediateCode> {
-    let mut result: Vec<IntermediateCode> = Vec::new();
-    let disasm = disassemble::Disassembler::new(&script, frag.offset - script.base);
-    for ins in disasm {
-        if ins.offset + ins.bytes.len() > frag.offset + frag.length { break; }
-
-        let mut ic = instruction_to_intermediate_code(&ins);
-        result.append(&mut ic);
-    }
-    result
+    Instruction{ offset: ins.offset, length: ins.bytes.len(), ops: result }
 }
