@@ -234,12 +234,13 @@ pub fn reduce_graph(graph: &mut code::CodeGraph) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{code, script, intermediate};
 
     // Graph must contain 2 nodes where node 0 -> 1 as an always branch
-    fn verify_trivial_2_node_1_edge_graph(graph: &CodeGraph) {
+    fn verify_trivial_2_node_1_edge_graph(graph: &code::CodeGraph) {
         assert_eq!(graph.node_count(), 2);
         assert_eq!(graph.edge_count(), 1);
-        let e0 = get_outgoing_edge(&graph, NodeIndex::new(0), Branch::Always);
+        let e0 = get_outgoing_edge(&graph, NodeIndex::new(0), code::Branch::Always);
         assert!(e0.is_some());
         let e0 = e0.unwrap();
         assert_eq!(e0.source(), NodeIndex::new(0));
@@ -247,9 +248,15 @@ mod tests {
     }
 
     // Graph must contain 1 node, no edges
-    fn verify_trivial_1_node_no_edges_graph(graph: &CodeGraph) {
+    fn verify_trivial_1_node_no_edges_graph(graph: &code::CodeGraph) {
         assert_eq!(graph.node_count(), 1);
         assert_eq!(graph.edge_count(), 0);
+    }
+
+    fn make_code_frag(offset: usize) -> code::CodeFragment {
+        let ops: Vec<intermediate::IntermediateCode> = Vec::new();
+        let instructions = vec![ intermediate::Instruction{ offset, length: 1, ops } ];
+        code::CodeFragment{ instructions }
     }
 
     #[test]
@@ -263,11 +270,11 @@ mod tests {
          */
         let script = script::ScriptBlock{ r#type: script::BlockType::Code, base: 0, data: &[] };
         let code_blocks = vec![
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 0, length: 1 }, branch_index_always: None, branch_index_true: Some(OffsetIndex::Index(2)), branch_index_false: Some(OffsetIndex::Index(1)) },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 1, length: 1 }, branch_index_always: Some(OffsetIndex::Index(2)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 2, length: 1 }, branch_index_always: None, branch_index_true: None, branch_index_false: None },
+            code::CodeBlock{ script: &script, code: make_code_frag(0), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::Index(2), branch_index_false: code::OffsetIndex::Index(1) },
+            code::CodeBlock{ script: &script, code: make_code_frag(1), branch_index_always: code::OffsetIndex::Index(2), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(2), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
         ];
-        let mut graph = create_graph_from_codeblocks(&code_blocks);
+        let mut graph = code::create_graph_from_codeblocks(&code_blocks);
         assert!(reduce_graph_if(&mut graph));
         assert!(!reduce_graph_if(&mut graph));
         verify_trivial_2_node_1_edge_graph(&graph);
@@ -287,12 +294,12 @@ mod tests {
          */
         let script = script::ScriptBlock{ r#type: script::BlockType::Code, base: 0, data: &[] };
         let code_blocks = vec![
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 0, length: 1 }, branch_index_always: None, branch_index_true: Some(OffsetIndex::Index(1)), branch_index_false: Some(OffsetIndex::Index(2)) },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 1, length: 1 }, branch_index_always: Some(OffsetIndex::Index(3)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 2, length: 1 }, branch_index_always: Some(OffsetIndex::Index(3)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 3, length: 1 }, branch_index_always: None, branch_index_true: None, branch_index_false: None },
+            code::CodeBlock{ script: &script, code: make_code_frag(0), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::Index(1), branch_index_false: code::OffsetIndex::Index(2) },
+            code::CodeBlock{ script: &script, code: make_code_frag(1), branch_index_always: code::OffsetIndex::Index(3), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(2), branch_index_always: code::OffsetIndex::Index(3), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(3), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
         ];
-        let mut graph = create_graph_from_codeblocks(&code_blocks);
+        let mut graph = code::create_graph_from_codeblocks(&code_blocks);
         assert!(reduce_graph_if_else(&mut graph));
         assert!(!reduce_graph_if_else(&mut graph));
         verify_trivial_2_node_1_edge_graph(&graph);
@@ -309,11 +316,11 @@ mod tests {
          */
         let script = script::ScriptBlock{ r#type: script::BlockType::Code, base: 0, data: &[] };
         let code_blocks = vec![
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 0, length: 1 }, branch_index_always: Some(OffsetIndex::Index(1)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 1, length: 1 }, branch_index_always: Some(OffsetIndex::Index(2)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 2, length: 1 }, branch_index_always: None, branch_index_true: None, branch_index_false: None },
+            code::CodeBlock{ script: &script, code: make_code_frag(0), branch_index_always: code::OffsetIndex::Index(1), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(1), branch_index_always: code::OffsetIndex::Index(2), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(2), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
         ];
-        let mut graph = create_graph_from_codeblocks(&code_blocks);
+        let mut graph = code::create_graph_from_codeblocks(&code_blocks);
         assert!(reduce_graph_sequential(&mut graph));
         verify_trivial_2_node_1_edge_graph(&graph);
     }
@@ -327,10 +334,10 @@ mod tests {
          */
         let script = script::ScriptBlock{ r#type: script::BlockType::Code, base: 0, data: &[] };
         let code_blocks = vec![
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 0, length: 1 }, branch_index_always: Some(OffsetIndex::Index(1)), branch_index_true: None, branch_index_false: None },
-            CodeBlock{ script: &script, code: CodeFragment{ offset: 1, length: 1 }, branch_index_always: None, branch_index_true: None, branch_index_false: None },
+            code::CodeBlock{ script: &script, code: make_code_frag(0), branch_index_always: code::OffsetIndex::Index(1), branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
+            code::CodeBlock{ script: &script, code: make_code_frag(1), branch_index_always: code::OffsetIndex::None, branch_index_true: code::OffsetIndex::None, branch_index_false: code::OffsetIndex::None },
         ];
-        let mut graph = create_graph_from_codeblocks(&code_blocks);
+        let mut graph = code::create_graph_from_codeblocks(&code_blocks);
         assert!(reduce_graph_sequential(&mut graph));
         assert!(!reduce_graph_sequential(&mut graph));
         verify_trivial_1_node_no_edges_graph(&graph);
