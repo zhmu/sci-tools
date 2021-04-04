@@ -1,4 +1,5 @@
 use petgraph::graph::Graph;
+use std::collections::HashMap;
 
 use crate::{script, intermediate};
 
@@ -78,5 +79,50 @@ impl<'a> CodeNode<'a> {
     }
 }
 
-
 pub type CodeGraph<'a> = Graph<CodeNode<'a>, CodeEdge>;
+
+#[derive(Copy,Clone)]
+pub enum OffsetIndex {
+    None,
+    Offset(usize),
+    Index(usize),
+}
+
+pub struct CodeBlock<'a> {
+    pub script: &'a script::ScriptBlock<'a>,
+    pub code: CodeFragment,
+    pub branch_index_always: OffsetIndex,
+    pub branch_index_true: OffsetIndex,
+    pub branch_index_false: OffsetIndex,
+}
+
+impl<'a> CodeBlock<'a> {
+    pub fn new(script: &'a script::ScriptBlock, code: CodeFragment) -> CodeBlock<'a> {
+        CodeBlock{ script, code, branch_index_always: OffsetIndex::None, branch_index_true: OffsetIndex::None, branch_index_false: OffsetIndex::None }
+    }
+}
+
+pub fn create_graph_from_codeblocks<'a>(blocks: &'a Vec<CodeBlock<'a>>) -> CodeGraph<'a> {
+    let mut graph = CodeGraph::new();
+    let mut node_map: HashMap<usize, petgraph::prelude::NodeIndex> = HashMap::new();
+    for (block_nr, block) in blocks.iter().enumerate() {
+        let code_block = CodeNode{ script: block.script, ops: vec![ Operation::Execute(block.code.clone()) ]};
+        let n = graph.add_node(code_block);
+        node_map.insert(block_nr, n);
+    }
+
+    for (block_nr, block) in blocks.iter().enumerate() {
+        if let OffsetIndex::Index(index) = block.branch_index_always {
+            graph.add_edge(node_map[&block_nr], node_map[&index], CodeEdge{ branch: Branch::Always });
+        }
+        if let OffsetIndex::Index(index) = block.branch_index_true {
+            graph.add_edge(node_map[&block_nr], node_map[&index], CodeEdge{ branch: Branch::True });
+        }
+        if let OffsetIndex::Index(index) = block.branch_index_false {
+            graph.add_edge(node_map[&block_nr], node_map[&index], CodeEdge{ branch: Branch::False });
+        }
+    }
+
+    graph
+}
+
