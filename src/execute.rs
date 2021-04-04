@@ -11,7 +11,6 @@ pub struct VMState {
     rest: intermediate::Expression,
     sp: intermediate::Expression,
     prev: intermediate::Expression,
-    pc: intermediate::Expression,
     tmp: intermediate::Expression,
     stack: Vec<intermediate::Expression>
 }
@@ -23,7 +22,7 @@ impl VMState {
         for _ in 0..STACK_SIZE {
             stack.push(zero.clone());
         }
-        VMState{ acc: zero.clone(), pc: zero.clone(), rest: zero.clone(), prev: zero.clone(), sp: zero.clone(), tmp: zero.clone(), stack }
+        VMState{ acc: zero.clone(), rest: zero.clone(), prev: zero.clone(), sp: zero.clone(), tmp: zero.clone(), stack }
     }
 
 }
@@ -56,7 +55,7 @@ impl fmt::Display for VMState {
         for n in 0..=stack_size {
             stack += &format!(" {}", format_expr(&self.stack[n])).to_string();
         }
-        write!(f, "acc: {} pc: {}: rest: {} prev: {}, sp: {} stack{}", format_expr(&self.acc), format_expr(&self.pc), format_expr(&self.rest), format_expr(&self.prev), format_expr(&self.sp), stack)
+        write!(f, "acc: {} rest: {} prev: {}, sp: {} stack{}", format_expr(&self.acc), format_expr(&self.rest), format_expr(&self.prev), format_expr(&self.sp), stack)
     }
 }
 
@@ -217,12 +216,6 @@ impl VM {
                         self.state.tmp = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.tmp) {
                             self.state.tmp = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
-                        }
-                    },
-                    intermediate::Expression::Operand(intermediate::Operand::Pc) => {
-                        self.state.pc = simplify_expr(&mut self.state, expr);
-                        if let Some(v) = expr_to_value(&self.state, &self.state.pc) {
-                            self.state.pc = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
                     intermediate::Expression::Operand(intermediate::Operand::Tos) => {

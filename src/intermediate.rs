@@ -14,7 +14,6 @@ pub enum Operand {
     Tos,
     Rest,
     OpSelf,
-    Pc,
     Tmp,
 }
 
@@ -85,7 +84,6 @@ fn expr_imm(n: usize) -> Expression { Expression::Operand(Operand::Imm(n)) }
 fn expr_self() -> Expression { Expression::Operand(Operand::OpSelf) }
 fn expr_tos() -> Expression { Expression::Operand(Operand::Tos) }
 fn expr_tmp() -> Expression { Expression::Operand(Operand::Tmp) }
-fn expr_pc() -> Expression { Expression::Operand(Operand::Pc) }
 
 fn new_box_expr(op: Operand) -> Box<Expression> {
     Box::new(Expression::Operand(op))
@@ -95,7 +93,6 @@ fn new_box_imm(n: usize) -> Box<Expression> { new_box_expr(Operand::Imm(n)) }
 fn new_box_acc() -> Box<Expression> { new_box_expr(Operand::Acc) }
 fn new_box_sp() -> Box<Expression> { new_box_expr(Operand::Sp) }
 fn new_box_rest() -> Box<Expression> { new_box_expr(Operand::Rest) }
-fn new_box_pc() -> Box<Expression> { new_box_expr(Operand::Pc) }
 fn new_box_tos() -> Box<Expression> { new_box_expr(Operand::Tos) }
 
 fn adjust_sp_before_call(frame_size: usize) -> Vec<IntermediateCode> {
@@ -152,7 +149,6 @@ fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
 
 pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.push(IntermediateCode::Assign(expr_pc(), expr_imm(ins.offset + ins.bytes.len())));
     match ins.bytes.first().unwrap() {
         0x00 | 0x01 => { // bnot
             result.push(IntermediateCode::Assign(expr_acc(), Expression::Binary(BinaryOp::ExclusiveOr, new_box_acc(), new_box_imm(0xffff))));
@@ -401,11 +397,11 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x72 | 0x73 => { // lofsa
             let offset = ins.args[0];
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Binary(BinaryOp::Add, new_box_pc(), new_box_imm(offset))));
+            result.push(IntermediateCode::Assign(expr_acc(), expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
         },
         0x74 | 0x75 => { // lofss
             let offset = ins.args[0];
-            result.append(&mut do_push(Expression::Binary(BinaryOp::Add, new_box_pc(), new_box_imm(offset))));
+            result.append(&mut do_push(expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
         },
         0x76 | 0x77 => { // push0
             result.append(&mut do_push(expr_imm(0)));
