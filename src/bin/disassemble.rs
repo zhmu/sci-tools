@@ -51,7 +51,7 @@ fn get_pretty_address(script: &script::Script, address: usize, labels: &LabelMap
 }
 
 fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, labels: &LabelMap) {
-    let disasm = disassemble::Disassembler::new(&block);
+    let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
         let offset = ins.offset;
         if let Some(label) = labels.get(&offset) {
@@ -137,7 +137,7 @@ fn generate_said_labels(saids: &said::Said, labels: &mut LabelMap) {
 }
 
 fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
-    let disasm = disassemble::Disassembler::new(&block);
+    let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
         if ins.bytes[0] == 0x40 || ins.bytes[0] == 0x41 { /* call */
             let j_offset = script::relpos0_to_absolute_offset(&ins);
@@ -188,37 +188,6 @@ fn find_labels(script: &script::Script, selector_vocab: &vocab::Vocab997, main_v
     Ok(labels)
 }
 
-fn is_always_branch(opcode: u8) -> bool {
-    match opcode {
-        0x32 | 0x33 /* jmp */ => { return true },
-        0x40 | 0x41 /* call */ => { return true },
-        0x42 | 0x43 /* callk */ => { return true },
-        0x44 | 0x45 /* callb */ => { return true },
-        0x46 | 0x47 /* calle */ => { return true },
-        0x48 | 0x49 /* ret */ => { return true },
-        _ => { return false }
-    }
-}
-
-fn is_conditional_branch(opcode: u8) -> bool {
-    match opcode {
-        0x2e | 0x2f /* bt */ => { return true },
-        0x30 | 0x31 /* bnt */ => { return true },
-        _ => { return false }
-    }
-}
-
-fn split_code_block(block: &script::ScriptBlock) {
-    let disasm = disassemble::Disassembler::new(&block);
-    for ins in disasm {
-        let opcode = ins.bytes[0];
-        if is_always_branch(opcode) {
-        }
-        if is_conditional_branch(opcode) {
-        }
-    }
-}
-
 fn main() -> Result<(), ScriptError> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
@@ -248,13 +217,6 @@ fn main() -> Result<(), ScriptError> {
             _ => { }
         };
         println!();
-    }
-
-    for block in &script.blocks {
-        match block.r#type {
-            script::BlockType::Code => { split_code_block(&block); }
-            _ => { }
-        };
     }
 
     Ok(())
