@@ -18,6 +18,14 @@ impl<'a> Streamer<'a> {
         self.input_pos
     }
 
+    pub fn peek_byte(&mut self) -> u8 {
+        let mut b: u8 = 0;
+        if !self.end_of_stream() {
+            b = self.input[self.input_pos];
+        }
+        b
+    }
+
     pub fn get_byte(&mut self) -> u8 {
         let mut b: u8 = 0;
         if !self.end_of_stream() {

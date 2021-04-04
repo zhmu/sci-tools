@@ -3,15 +3,16 @@ extern crate log;
 
 extern crate scitools;
 
+use scitools::stream;
 use num_enum::TryFromPrimitive;
 use std::convert::TryFrom;
 use bmp::{Image, Pixel};
 use log::{info, warn};
-//use std::fs::File;
+use std::env;
 
 #[derive(Debug)]
 pub enum PictureError {
-    Resource(scitools::ResourceError),
+    IoError(std::io::Error),
     InvalidPalette(usize),
     UnrecognizedOpcode(u8),
     UnrecognizedOpcodeX(u8),
@@ -19,9 +20,9 @@ pub enum PictureError {
     UnimplementedX(PicOpX),
 }
 
-impl From<scitools::ResourceError> for PictureError {
-    fn from(error: scitools::ResourceError) -> Self {
-        PictureError::Resource(error)
+impl From<std::io::Error> for PictureError {
+    fn from(error: std::io::Error) -> Self {
+       PictureError::IoError(error)
     }
 }
 
@@ -62,7 +63,7 @@ fn ega_color_to_rgb(color: u8) -> Pixel {
     }
 }
 
-fn get_drawing_mask(color: u8, prio: u8, control: u8) -> u32 {
+fn _get_drawing_mask(color: u8, prio: u8, control: u8) -> u32 {
     let mut flag = 0;
     if color != 255 {
         flag = flag | DRAW_ENABLE_VISUAL;
@@ -168,18 +169,18 @@ fn clamp<T: std::cmp::PartialOrd>(val: T, min: T, max: T) -> T {
     }
 }
 
-fn get_abs_coords(res: &mut scitools::Resource) -> Result<Coord, scitools::ResourceError> {
-    let coord_prefix = res.get_byte()?;
-    let mut x = res.get_byte()? as u32;
-    let mut y = res.get_byte()? as u32;
+fn get_abs_coords(res: &mut stream::Streamer) -> Coord {
+    let coord_prefix = res.get_byte();
+    let mut x = res.get_byte() as u32;
+    let mut y = res.get_byte() as u32;
     //info!("get_abs_coords(): x {} y {} prefix {}", x, y, coord_prefix);
     x = x | ((coord_prefix & 0xf0) as u32) << 4;
     y = y | ((coord_prefix & 0x0f) as u32) << 8;
-    Ok(Coord{ x, y })
+    Coord{ x, y }
 }
 
-fn get_rel_coords(res: &mut scitools::Resource, base: &Coord) -> Result<Coord, scitools::ResourceError> {
-    let input = res.get_byte()?;
+fn get_rel_coords(res: &mut stream::Streamer, base: &Coord) -> Coord {
+    let input = res.get_byte();
     let mut x = base.x;
     if (input & 0x80) != 0 {
         x -= ((input >> 4) & 7) as u32;
@@ -192,7 +193,7 @@ fn get_rel_coords(res: &mut scitools::Resource, base: &Coord) -> Result<Coord, s
     } else {
         y += (input & 0x07) as u32;
     }
-    Ok(Coord{ x, y })
+    Coord{ x, y }
 }
 
 pub struct Picture {
@@ -209,7 +210,7 @@ impl Picture {
         Picture{ visual, priority, control }
     }
 
-    pub fn load(&mut self, res: &mut scitools::Resource) -> Result<(), PictureError> {
+    pub fn load(&mut self, data: &[u8]) -> Result<(), PictureError> {
         let mut draw_enable = DRAW_ENABLE_VISUAL | DRAW_ENABLE_PRIORITY;
         let mut priority: u8 = 0;
         let mut control: u8 = 0;
@@ -224,11 +225,12 @@ impl Picture {
         //    }
         //}
 
-        while !res.end_of_resource() {
-            let opcode = res.get_byte()?;
+        let mut res = stream::Streamer::new(data, 0);
+        while !res.end_of_stream() {
+            let opcode = res.get_byte();
             match PicOp::try_from(opcode) {
                 Ok(PicOp::SetColor) => {
-                    let code = res.get_byte()? as usize;
+                    let code = res.get_byte() as usize;
                     info!("SetColor({})", code);
                     col = palette[code / 40][code % 40];
                     draw_enable = draw_enable | DRAW_ENABLE_VISUAL;
@@ -238,7 +240,7 @@ impl Picture {
                     draw_enable = draw_enable & !DRAW_ENABLE_VISUAL;
                 },
                 Ok(PicOp::SetPriority) => {
-                    let code = res.get_byte()?;
+                    let code = res.get_byte();
                     info!("SetPriority({})", code);
                     priority = code & 0xf;
                     draw_enable = draw_enable | DRAW_ENABLE_PRIORITY;
@@ -250,30 +252,30 @@ impl Picture {
                 Ok(PicOp::RelativePatterns) => {
                     info!("RelativePatterns()");
                     if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                        let code = res.get_byte()?;
+                        let code = res.get_byte();
                         pattern_nr = (code >> 1) & 0x7f;
                     }
 
-                    let mut coord = get_abs_coords(res)?;
+                    let mut coord = get_abs_coords(&mut res);
                     self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
 
-                    while res.peek_byte()? < 0xf0 {
-                        coord = get_rel_coords(res, &coord)?;
+                    while res.peek_byte() < 0xf0 {
+                        coord = get_rel_coords(&mut res, &coord);
                         self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::RelativeMediumLines) => {
                     info!("RelativeMediumLines()");
-                    let mut old_coord = get_abs_coords(res)?;
-                    while res.peek_byte()? < 0xf0 {
-                        let code = res.get_byte()?;
+                    let mut old_coord = get_abs_coords(&mut res);
+                    while res.peek_byte() < 0xf0 {
+                        let code = res.get_byte();
                         let mut y = old_coord.y;
                         if (code & 0x80) != 0 {
                             y = y - (code & 0x7f) as u32;
                         } else {
                             y = y + code as u32;
                         }
-                        let code = res.get_byte()?;
+                        let code = res.get_byte();
                         let mut x = old_coord.x;
                         if (code & 0x80) != 0 {
                             x -= 128 - (code & 0x7f) as u32;
@@ -287,46 +289,46 @@ impl Picture {
                 },
                 Ok(PicOp::RelativeLongLines) => {
                     info!("RelativeLongLines()");
-                    let mut old_coord = get_abs_coords(res)?;
-                    while res.peek_byte()? < 0xf0 {
-                        let coord = get_abs_coords(res)?;
+                    let mut old_coord = get_abs_coords(&mut res);
+                    while res.peek_byte() < 0xf0 {
+                        let coord = get_abs_coords(&mut res);
                         self.dither_line(&old_coord, &coord, col, priority, control, draw_enable);
                         old_coord = coord;
                     }
                 },
                 Ok(PicOp::RelativeShortLines) => {
                     info!("RelativeShortLines()");
-                    let mut old_coord = get_abs_coords(res)?;
-                    while res.peek_byte()? < 0xf0 {
-                        let coord = get_rel_coords(res, &old_coord)?;
+                    let mut old_coord = get_abs_coords(&mut res);
+                    while res.peek_byte() < 0xf0 {
+                        let coord = get_rel_coords(&mut res, &old_coord);
                         self.dither_line(&old_coord, &coord, col, priority, control, draw_enable);
                         old_coord = coord;
                     }
                 },
                 Ok(PicOp::Fill) => {
                     info!("Fill()");
-                    while res.peek_byte()? < 0xf0 {
-                        let coord = get_abs_coords(res)?;
+                    while res.peek_byte() < 0xf0 {
+                        let coord = get_abs_coords(&mut res);
                         self.dither_fill(&coord, col, priority, control, draw_enable);
                     }
                 },
                 Ok(PicOp::SetPattern) => {
-                    let code = res.get_byte()?;
+                    let code = res.get_byte();
                     info!("SetPattern({})", code);
                     pattern_code = code;
                 },
                 Ok(PicOp::AbsolutePatterns) => {
-                    while res.peek_byte()? < 0xf0 {
+                    while res.peek_byte() < 0xf0 {
                         if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                            let code = res.get_byte()?;
+                            let code = res.get_byte();
                             pattern_nr = (code >> 1) & 0x7f;
                         }
-                        let coord = get_abs_coords(res)?;
+                        let coord = get_abs_coords(&mut res);
                         self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::SetControl) => {
-                    let code = res.get_byte()?;
+                    let code = res.get_byte();
                     info!("SetControl({})", code);
                     control = code & 0xf;
                     draw_enable = draw_enable | DRAW_ENABLE_CONTROL;
@@ -337,43 +339,43 @@ impl Picture {
                 Ok(PicOp::RelativeMediumPatterns) => {
                     info!("RelativeMediumPatterns()");
                     if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                        let code = res.get_byte()?;
+                        let code = res.get_byte();
                         pattern_nr = (code >> 1) & 0x7f;
                     }
-                    let mut coord = get_abs_coords(res)?;
+                    let mut coord = get_abs_coords(&mut res);
 
                     self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
-                    while res.peek_byte()? < 0xf0 {
+                    while res.peek_byte() < 0xf0 {
                         if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                            let code = res.get_byte()?;
+                            let code = res.get_byte();
                             pattern_nr = (code >> 1) & 0x7f;
                         }
 
-                        let code = res.get_byte()?;
+                        let code = res.get_byte();
                         let mut y = coord.y;
                         if (code & 0x80) != 0 {
                             y = y - (code & 0x7f) as u32;
                         } else {
                             y = y + code as u32;
                         }
-                        let x = coord.x + res.get_byte()? as u32;
+                        let x = coord.x + res.get_byte() as u32;
 
                         coord = Coord{ x, y };
                         self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::X) => {
-                    let opcodex = res.get_byte()?;
+                    let opcodex = res.get_byte();
                     match PicOpX::try_from(opcodex) {
                         //Ok(PicOpX::SetPaletteEntry) => { return Err(PictureError::PicOpX) },
                         Ok(PicOpX::SetPalette) => {
-                            let palette_index = res.get_byte()? as usize;
+                            let palette_index = res.get_byte() as usize;
                             info!("PicOpX::SetPalette({})", palette_index);
                             if palette_index >= EGA_PALETTE_COUNT {
                                 return Err(PictureError::InvalidPalette(palette_index))
                             }
                             for n in 0..EGA_PALETTE_SIZE {
-                                palette[palette_index][n] = res.get_byte()?;
+                                palette[palette_index][n] = res.get_byte();
                             }
                         },
                         //Ok(PicOpX::Mono0) => { return Err(PictureError::TODO) },
@@ -519,7 +521,7 @@ impl Picture {
                 }
 
                 if (bitmap & (1 << bit_num)) != 0 {
-                    self.put_pixel(x as i32, y as i32, 0x100 | draw_enable, col, priority, control);
+                    self.put_pixel(x as i32, y as i32, draw_enable, col, priority, control);
                 }
                 bit_num += 1;
             }
@@ -528,7 +530,6 @@ impl Picture {
 
     fn put_pixel(&mut self, x: i32, y: i32, draw_enable: u32, col: u8, priority: u8, control: u8)
     {
-        if (draw_enable & 0x100) == 0 { return };
         if x < 0 || x >= SCREEN_WIDTH as i32 {
             warn!("put_pixel: x {} y {}, x out of range", x, y);
             return
@@ -553,24 +554,25 @@ impl Picture {
 }
 
 
-fn main() {
+fn main() -> Result<(), PictureError> {
     env_logger::init();
-    //let mut img = Image::new(320, 200);
-    //for (x, y) in img.coordinates() {
-        //img.set_pixel(x, y, Pixel{ r: x as u8, g: y as u8, b: 200 });
-    //}
-    //let _ = img.save("img.bmp");
 
-    let mut res = scitools::Resource::new("pic/pic.300").unwrap();
-    //println!("data 0 is {:}", res.get_byte().unwrap());
-    //println!("data 1 is {:}", res.get_byte().unwrap());
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        panic!("usage: {} out pic_id", args[0]);
+    }
+    let extract_path = &args[1];
+    let pic_id: i16 = args[2].parse().unwrap();
+
+    let pic_data = std::fs::read(format!("{}/pic.{:03}", extract_path, pic_id))?;
 
     let mut pic = Picture::new();
-    if let Err(x) = pic.load(&mut res) {
+    if let Err(x) = pic.load(&pic_data) {
         println!("load error: {:?}", x);
     }
 
     let _ = pic.visual.save("visual.bmp");
     let _ = pic.control.save("control.bmp");
     let _ = pic.priority.save("priority.bmp");
+    Ok(())
 }
