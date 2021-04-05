@@ -107,21 +107,14 @@ fn analyse_graph(graph: &code::CodeGraph) {
     }
 }
 
-fn convert_ops_to_ic(ops: &Vec<code::Operation>) -> Vec<intermediate::Instruction> {
+/*
+fn convert_code(state: &execute::VMState, ops: &Vec<code::Operation>) -> Vec<intermediate::Instruction> {
     let mut result: Vec<intermediate::Instruction> = Vec::new();
     for op in ops {
         match op {
-            code::Operation::IfElse(code, _, _) => {
-                println!("todo IfElse({:?})", code);
-                let mut x: Vec<intermediate::Instruction> = Vec::new();
-                for op in code {
-                    match op {
-                        code::Operation::Execute(frag) => {
-                            x.append(&mut frag.instructions.clone());
-                        },
-                        _ => { todo!(); }
-                    }
-                }
+            code::Operation::IfElse(code, _true_code, _false_code) => {
+                println!("convert: IFELSE: CODE");
+                let x = convert_code(&state, &code);
                 if DEBUG_VM {
                     println!("about to execute:");
                     for y in &x {
@@ -130,7 +123,7 @@ fn convert_ops_to_ic(ops: &Vec<code::Operation>) -> Vec<intermediate::Instructio
                     println!();
                 }
 
-                let mut vm = execute::VM::new();
+                let mut vm = execute::VM::new(&state);
                 for ic in &x {
                     if DEBUG_VM { println!("vm: executing {:?}", ic); }
                     for op in &ic.ops {
@@ -138,13 +131,108 @@ fn convert_ops_to_ic(ops: &Vec<code::Operation>) -> Vec<intermediate::Instructio
                     }
                     if DEBUG_VM { println!(">> state is now {}", vm.state); }
                 }
+
+                println!("ops {:?}", vm.ops);
             },
             code::Operation::If(_, _) => {
-                println!("todo If");
+                todo!("todo If");
             },
             code::Operation::Execute(frag) => {
+                println!("convert: EXECUTE");
                 let mut code = frag.instructions.clone();
                 result.append(&mut code);
+            },
+        }
+    }
+    result
+}
+*/
+
+fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level: i32) -> String {
+    let mut indent = String::new();
+    for _ in 0..level { indent += "    "; }
+
+    let mut result = String::new();
+    for op in ops {
+        match op {
+            code::Operation::IfElse(code, true_code, false_code) => {
+                let code = convert_code(state, &code, level + 1);
+                let mut true_state = state.clone();
+                let mut false_state = state.clone();
+                let true_code = convert_code(&mut true_state, &true_code, level + 1);
+                let false_code = convert_code(&mut false_state, &false_code, level + 1);
+                result += format!("{}if (\n", indent).as_str();
+                result += &code;
+                result += format!("{}) then {{\n", indent).as_str();
+                result += &true_code;
+                result += format!("{}}} else {{\n", indent).as_str();
+                result += &false_code;
+                result += format!("{}}}\n", indent).as_str();
+            },
+            code::Operation::If(code, true_code) => {
+                let code = convert_code(state, &code, level + 1);
+                let mut true_state = state.clone();
+                let true_code = convert_code(&mut true_state, &true_code, level + 1);
+                result += format!("{}if (\n", indent).as_str();
+                result += &code;
+                result += format!("{}) then {{\n", indent).as_str();
+                result += &true_code;
+                result += format!("{}}}\n", indent).as_str();
+            },
+            code::Operation::Execute(frag) => {
+                result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
+
+                let mut vm = execute::VM::new(&state);
+                for ins in &frag.instructions {
+                    for op in &ins.ops {
+                        println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                        vm.execute(&op);
+                    }
+                }
+                *state = vm.state;
+
+                for rop in &vm.ops {
+                    result += format!("{}{:?}\n", indent, rop).as_str();
+                }
+            },
+        }
+    }
+    result
+}
+
+fn format_ops(ops: &Vec<code::Operation>, level: i32) -> String {
+    let mut indent = String::new();
+    for _ in 0..level { indent += "    "; }
+
+    let mut result = String::new();
+    for op in ops {
+        match op {
+            code::Operation::IfElse(code, true_code, false_code) => {
+                let code = format_ops(&code, level + 1);
+                let true_code = format_ops(&true_code, level + 1);
+                let false_code= format_ops(&false_code, level + 1);
+                result += format!("{}if (\n", indent).as_str();
+                result += &code;
+                result += format!("{}) then {{\n", indent).as_str();
+                result += &true_code;
+                result += format!("{}}} else {{\n", indent).as_str();
+                result += &false_code;
+                result += format!("{}}}\n", indent).as_str();
+            },
+            code::Operation::If(code, true_code) => {
+                let code = format_ops(&code, level + 1);
+                let true_code = format_ops(&true_code, level + 1);
+                result += format!("{}if (\n", indent).as_str();
+                result += &code;
+                result += format!("{}) then {{\n", indent).as_str();
+                result += &true_code;
+                result += format!("{}}}\n", indent).as_str();
+            },
+            code::Operation::Execute(frag) => {
+                result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
+                for ii in &frag.instructions {
+                    result += format!("{}{:?}\n", indent, ii.ops).as_str();
+                }
             },
         }
     }
@@ -164,15 +252,13 @@ fn write_code(fname: &str, block: &script::ScriptBlock, _labels: &label::LabelMa
             continue;
         }
 
-        //println!("root {:?}", node.as_str());
-        //let s = format_ops(0, block, labels, &node.ops);
-        //writeln!(out_file, "// Node")?;
-        //writeln!(out_file, "{}", s)?;
-
-        let ic = convert_ops_to_ic(&node.ops);
-        for i in &ic {
-            println!("{:?}", i);
-        }
+        println!("intermediate code:");
+        println!("{}", format_ops(&node.ops, 0));
+        println!();
+        println!("converted code:");
+        let mut state = execute::VMState::new();
+        println!("{}", convert_code(&mut state, &node.ops, 0));
+        println!();
     }
 
     writeln!(out_file, "\n")?;

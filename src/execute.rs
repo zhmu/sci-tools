@@ -5,18 +5,18 @@ use std::collections::HashSet;
 
 const STACK_SIZE: usize = 32;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct VMState {
     acc: intermediate::Expression,
     rest: intermediate::Expression,
-    sp: intermediate::Expression,
+    pub sp: intermediate::Expression,
     prev: intermediate::Expression,
     tmp: intermediate::Expression,
     stack: Vec<intermediate::Expression>
 }
 
 impl VMState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let zero = intermediate::Expression::Operand(intermediate::Operand::Imm(0));
         let mut stack: Vec<intermediate::Expression> = Vec::new();
         for _ in 0..STACK_SIZE {
@@ -24,7 +24,6 @@ impl VMState {
         }
         VMState{ acc: zero.clone(), rest: zero.clone(), prev: zero.clone(), sp: zero.clone(), tmp: zero.clone(), stack }
     }
-
 }
 
 fn get_imm_value(expr: &intermediate::Expression) -> Option<usize> {
@@ -62,6 +61,8 @@ impl fmt::Display for VMState {
 #[derive(Debug)]
 pub enum ResultOp {
     AssignProperty(usize, intermediate::Expression),
+    AssignGlobal(usize, intermediate::Expression),
+    CallE(usize, usize, Vec<intermediate::Expression>),
 }
 
 pub enum BranchIf {
@@ -81,6 +82,7 @@ enum StateEnum {
     Sp,
     Acc,
     Tmp,
+    Rest
 }
 
 fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<usize>, b: Option<usize>) -> Option<usize> {
@@ -147,12 +149,20 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
                 state_seen.insert(StateEnum::Tmp);
                 return simplify_expr2(state, state_seen, state.tmp.clone());
             }
-            return state.acc.clone();
+            return state.tmp.clone();
+        },
+        intermediate::Expression::Operand(intermediate::Operand::Rest) => {
+            if !state_seen.contains(&StateEnum::Rest) {
+                state_seen.insert(StateEnum::Rest);
+                return simplify_expr2(state, state_seen, state.rest.clone());
+            }
+            return state.rest.clone();
         },
         intermediate::Expression::Operand(intermediate::Operand::Tos) => {
             if let Some(index) = expr_to_value(state, &state.sp) {
-                let tos = state.stack[index].clone();
-                //println!("simplify_expr2: reading tos index {} -> {:?}", index, tos);
+                assert_eq!(index % 2, 0);
+                let tos = state.stack[index / 2].clone();
+                //println!("simplify_expr2: reading tos index {} -> {:?}", index / 2, tos);
                 return simplify_expr2(state, state_seen, tos);
             }
             panic!("cannot resolve sp value for tos");
@@ -180,8 +190,8 @@ fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> interm
 }
 
 impl VM {
-    pub fn new() -> Self {
-        VM{ ops: Vec::new(), branch: BranchIf::Never, state: VMState::new() }
+    pub fn new(state: &VMState) -> Self {
+        VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone() }
     }
 
     pub fn execute(&mut self, ic: &intermediate::IntermediateCode) {
@@ -220,13 +230,31 @@ impl VM {
                     },
                     intermediate::Expression::Operand(intermediate::Operand::Tos) => {
                         if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
-                            self.state.stack[index] = simplify_expr(&mut self.state, expr);
+                            assert_eq!(index % 2, 0);
+                            self.state.stack[index / 2] = simplify_expr(&mut self.state, expr);
                         } else {
                             panic!("could not simplify sp");
                         }
                     },
                     intermediate::Expression::Operand(intermediate::Operand::Property(n)) => {
-                        self.ops.push(ResultOp::AssignProperty(*n, expr.clone()));
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        self.ops.push(ResultOp::AssignProperty(*n, result));
+                    },
+                    intermediate::Expression::Operand(intermediate::Operand::Global(n)) => {
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        self.ops.push(ResultOp::AssignGlobal(*n, result));
                     },
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
@@ -246,7 +274,22 @@ impl VM {
                 } else {
                     panic!();
                 }
-            }
+            },
+            intermediate::IntermediateCode::CallE(script, disp_index, frame_size) => {
+                if let Some(sp) = expr_to_value(&self.state, &self.state.sp) {
+                    assert_eq!(sp % 2, 0);
+
+                    let mut params: Vec<intermediate::Expression> = Vec::new();
+                    for n in 0..=(frame_size / 2) {
+                        let expr = self.state.stack[sp / 2 + n].clone();
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        params.push(expr);
+                    }
+                    self.ops.push(ResultOp::CallE(*script, *disp_index, params));
+                } else {
+                    panic!("could not simplify sp");
+                }
+            },
             op @ _ => { panic!("vm execute todo {:?}", op); }
         }
     }

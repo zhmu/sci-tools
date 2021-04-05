@@ -123,13 +123,13 @@ fn apply_to_op(op: Operand, what: What) -> Vec<IntermediateCode> {
 fn do_push(expr: Expression) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
     result.push(IntermediateCode::Assign(expr_tos(), expr));
-    result.append(&mut apply_to_op(Operand::Sp, What::Add(1)));
+    result.append(&mut apply_to_op(Operand::Sp, What::Add(2)));
     result
 }
 
 fn pre_pop() -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.append(&mut apply_to_op(Operand::Sp, What::Subtract(1)));
+    result.append(&mut apply_to_op(Operand::Sp, What::Subtract(2)));
     result
 }
 
@@ -253,7 +253,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut do_push(expr_imm(ins.args[0])));
         },
         0x3a | 0x3b => { // toss
-            result.append(&mut apply_to_op(Operand::Sp, What::Subtract(1)));
+            result.append(&mut apply_to_op(Operand::Sp, What::Subtract(2)));
         },
         0x3c | 0x3d => { // dup
             result.append(&mut pre_pop());
