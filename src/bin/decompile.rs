@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, intermediate, execute, split, label};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -107,47 +107,6 @@ fn analyse_graph(graph: &code::CodeGraph) {
     }
 }
 
-/*
-fn convert_code(state: &execute::VMState, ops: &Vec<code::Operation>) -> Vec<intermediate::Instruction> {
-    let mut result: Vec<intermediate::Instruction> = Vec::new();
-    for op in ops {
-        match op {
-            code::Operation::IfElse(code, _true_code, _false_code) => {
-                println!("convert: IFELSE: CODE");
-                let x = convert_code(&state, &code);
-                if DEBUG_VM {
-                    println!("about to execute:");
-                    for y in &x {
-                        println!("  {:?}", y);
-                    }
-                    println!();
-                }
-
-                let mut vm = execute::VM::new(&state);
-                for ic in &x {
-                    if DEBUG_VM { println!("vm: executing {:?}", ic); }
-                    for op in &ic.ops {
-                        vm.execute(&op);
-                    }
-                    if DEBUG_VM { println!(">> state is now {}", vm.state); }
-                }
-
-                println!("ops {:?}", vm.ops);
-            },
-            code::Operation::If(_, _) => {
-                todo!("todo If");
-            },
-            code::Operation::Execute(frag) => {
-                println!("convert: EXECUTE");
-                let mut code = frag.instructions.clone();
-                result.append(&mut code);
-            },
-        }
-    }
-    result
-}
-*/
-
 fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
@@ -185,7 +144,9 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
                 let mut vm = execute::VM::new(&state);
                 for ins in &frag.instructions {
                     for op in &ins.ops {
-                        println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                        if DEBUG_VM {
+                            println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                        }
                         vm.execute(&op);
                     }
                 }
@@ -193,6 +154,15 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
 
                 for rop in &vm.ops {
                     result += format!("{}{:?}\n", indent, rop).as_str();
+                }
+                match vm.branch {
+                    execute::BranchIf::True(expr) => {
+                        result += format!("{}TRUE CONDITION {:?}\n", indent, expr).as_str();
+                    },
+                    execute::BranchIf::False(expr) => {
+                        result += format!("{}FALSE CONDITION {:?}\n", indent, expr).as_str();
+                    },
+                    execute::BranchIf::Never => { }
                 }
             },
         }
@@ -210,7 +180,7 @@ fn format_ops(ops: &Vec<code::Operation>, level: i32) -> String {
             code::Operation::IfElse(code, true_code, false_code) => {
                 let code = format_ops(&code, level + 1);
                 let true_code = format_ops(&true_code, level + 1);
-                let false_code= format_ops(&false_code, level + 1);
+                let false_code = format_ops(&false_code, level + 1);
                 result += format!("{}if (\n", indent).as_str();
                 result += &code;
                 result += format!("{}) then {{\n", indent).as_str();

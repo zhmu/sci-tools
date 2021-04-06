@@ -60,9 +60,13 @@ impl fmt::Display for VMState {
 
 #[derive(Debug)]
 pub enum ResultOp {
-    AssignProperty(usize, intermediate::Expression),
-    AssignGlobal(usize, intermediate::Expression),
+    AssignProperty(intermediate::Expression, intermediate::Expression),
+    AssignGlobal(intermediate::Expression, intermediate::Expression),
+    AssignTemp(intermediate::Expression, intermediate::Expression),
     CallE(usize, usize, Vec<intermediate::Expression>),
+    Call(usize, Vec<intermediate::Expression>),
+    KCall(usize, Vec<intermediate::Expression>),
+    Return(),
 }
 
 pub enum BranchIf {
@@ -115,14 +119,31 @@ fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<usize>, b: Option<usiz
     None
 }
 
+fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<usize>) -> Option<usize> {
+    if a.is_some() {
+        let a = a.unwrap();
+        return Some(match op {
+            intermediate::UnaryOp::Negate => { todo!() },
+            intermediate::UnaryOp::LogicNot => { if a == 0 { 1 } else { 0 }}
+        })
+    }
+    None
+}
+
 fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<usize> {
     return match expr {
         intermediate::Expression::Operand(intermediate::Operand::Imm(n)) => { Some(*n) },
         intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { None },
         intermediate::Expression::Binary(op, a, b) => {
             let a = expr_to_value(state, a);
             let b = expr_to_value(state, b);
             apply_binary_op(op, a, b)
+        },
+        intermediate::Expression::Unary(op, a) => {
+            let a = expr_to_value(state, a);
+            apply_unary_op(op, a)
         },
         _ => { todo!("expr_to_value: {:?}", expr); }
     }
@@ -189,6 +210,18 @@ fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> interm
     simplify_expr2(state, &mut HashSet::new(), expr.clone())
 }
 
+fn gather_params(state: &mut VMState, sp: usize, frame_size: usize) -> Vec<intermediate::Expression> {
+    assert_eq!(sp % 2, 0);
+
+    let mut params: Vec<intermediate::Expression> = Vec::new();
+    for n in 0..=(frame_size / 2) {
+        let expr = state.stack[sp / 2 + n].clone();
+        let expr = simplify_expr(state, &expr);
+        params.push(expr);
+    }
+    params
+}
+
 impl VM {
     pub fn new(state: &VMState) -> Self {
         VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone() }
@@ -244,7 +277,8 @@ impl VM {
                         } else {
                             result = expr.clone();
                         }
-                        self.ops.push(ResultOp::AssignProperty(*n, result));
+                        let n = simplify_expr(&mut self.state, n);
+                        self.ops.push(ResultOp::AssignProperty(n, result));
                     },
                     intermediate::Expression::Operand(intermediate::Operand::Global(n)) => {
                         let result;
@@ -254,7 +288,19 @@ impl VM {
                         } else {
                             result = expr.clone();
                         }
-                        self.ops.push(ResultOp::AssignGlobal(*n, result));
+                        let n = simplify_expr(&mut self.state, n);
+                        self.ops.push(ResultOp::AssignGlobal(n, result));
+                    },
+                    intermediate::Expression::Operand(intermediate::Operand::Temp(n)) => {
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        let n = simplify_expr(&mut self.state, n);
+                        self.ops.push(ResultOp::AssignTemp(n, result));
                     },
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
@@ -275,17 +321,32 @@ impl VM {
                     panic!();
                 }
             },
+            intermediate::IntermediateCode::BranchAlways(_) => {
+                println!("BranchAlways(): don't think we need to do anything here?");
+            },
+            intermediate::IntermediateCode::Return() => {
+                self.ops.push(ResultOp::Return());
+            },
             intermediate::IntermediateCode::CallE(script, disp_index, frame_size) => {
                 if let Some(sp) = expr_to_value(&self.state, &self.state.sp) {
-                    assert_eq!(sp % 2, 0);
-
-                    let mut params: Vec<intermediate::Expression> = Vec::new();
-                    for n in 0..=(frame_size / 2) {
-                        let expr = self.state.stack[sp / 2 + n].clone();
-                        let expr = simplify_expr(&mut self.state, &expr);
-                        params.push(expr);
-                    }
+                    let params = gather_params(&mut self.state, sp, *frame_size);
                     self.ops.push(ResultOp::CallE(*script, *disp_index, params));
+                } else {
+                    panic!("could not simplify sp");
+                }
+            },
+            intermediate::IntermediateCode::Call(addr, frame_size) => {
+                if let Some(sp) = expr_to_value(&self.state, &self.state.sp) {
+                    let params = gather_params(&mut self.state, sp, *frame_size);
+                    self.ops.push(ResultOp::Call(*addr, params));
+                } else {
+                    panic!("could not simplify sp");
+                }
+            },
+            intermediate::IntermediateCode::KCall(func, frame_size) => {
+                if let Some(sp) = expr_to_value(&self.state, &self.state.sp) {
+                    let params = gather_params(&mut self.state, sp, *frame_size);
+                    self.ops.push(ResultOp::KCall(*func, params));
                 } else {
                     panic!("could not simplify sp");
                 }
