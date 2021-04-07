@@ -231,37 +231,37 @@ impl VM {
         match ic {
             intermediate::IntermediateCode::Assign(dest, expr) => {
                 match dest {
-                    intermediate::Expression::Operand(intermediate::Operand::Acc) => {
+                    intermediate::Operand::Acc => {
                         self.state.acc = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.acc) {
                             self.state.acc = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Prev) => {
+                    intermediate::Operand::Prev => {
                         self.state.prev = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.prev) {
                             self.state.prev = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Sp) => {
+                    intermediate::Operand::Sp => {
                         self.state.sp = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.sp) {
                             self.state.sp = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Rest) => {
+                    intermediate::Operand::Rest => {
                         self.state.rest = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.rest) {
                             self.state.rest = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Tmp) => {
+                    intermediate::Operand::Tmp => {
                         self.state.tmp = simplify_expr(&mut self.state, expr);
                         if let Some(v) = expr_to_value(&self.state, &self.state.tmp) {
                             self.state.tmp = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Tos) => {
+                    intermediate::Operand::Tos => {
                         if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
                             assert_eq!(index % 2, 0);
                             self.state.stack[index / 2] = simplify_expr(&mut self.state, expr);
@@ -269,7 +269,7 @@ impl VM {
                             panic!("could not simplify sp");
                         }
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Property(n)) => {
+                    intermediate::Operand::Property(n) => {
                         let result;
                         let expr = simplify_expr(&mut self.state, &expr);
                         if let Some(v) = expr_to_value(&self.state, &expr) {
@@ -280,7 +280,7 @@ impl VM {
                         let n = simplify_expr(&mut self.state, n);
                         self.ops.push(ResultOp::AssignProperty(n, result));
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Global(n)) => {
+                    intermediate::Operand::Global(n) => {
                         let result;
                         let expr = simplify_expr(&mut self.state, &expr);
                         if let Some(v) = expr_to_value(&self.state, &expr) {
@@ -291,7 +291,7 @@ impl VM {
                         let n = simplify_expr(&mut self.state, n);
                         self.ops.push(ResultOp::AssignGlobal(n, result));
                     },
-                    intermediate::Expression::Operand(intermediate::Operand::Temp(n)) => {
+                    intermediate::Operand::Temp(n) => {
                         let result;
                         let expr = simplify_expr(&mut self.state, &expr);
                         if let Some(v) = expr_to_value(&self.state, &expr) {
@@ -305,7 +305,7 @@ impl VM {
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
             },
-            intermediate::IntermediateCode::BranchFalse(_, _, expr) => {
+            intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr} => {
                 let expr = simplify_expr(&mut self.state, expr);
                 if let BranchIf::Never = self.branch {
                     self.branch = BranchIf::False(expr.clone());
@@ -313,7 +313,7 @@ impl VM {
                     panic!();
                 }
             }
-            intermediate::IntermediateCode::BranchTrue(_, _, expr) => {
+            intermediate::IntermediateCode::BranchTrue{ taken_offset: _, next_offset: _, expr} => {
                 let expr = simplify_expr(&mut self.state, expr);
                 if let BranchIf::Never = self.branch {
                     self.branch = BranchIf::True(expr.clone());

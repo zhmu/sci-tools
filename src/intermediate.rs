@@ -57,9 +57,9 @@ pub enum Expression {
 
 #[derive(Debug,Clone)]
 pub enum IntermediateCode {
-    Assign(Expression, Expression),
-    BranchTrue(usize, usize, Expression), // true-offset, false-offset, expr
-    BranchFalse(usize, usize, Expression), // true-offset, false-offset, expr
+    Assign(Operand, Expression),
+    BranchTrue{ taken_offset: usize, next_offset: usize, expr: Expression },
+    BranchFalse{ taken_offset: usize, next_offset: usize, expr: Expression },
     BranchAlways(usize),
     Call(usize, usize),
     KCall(usize, usize),
@@ -78,8 +78,6 @@ pub struct Instruction {
 
 fn expr_acc() -> Expression { Expression::Operand(Operand::Acc) }
 fn expr_prev() -> Expression { Expression::Operand(Operand::Prev) }
-fn expr_sp() -> Expression { Expression::Operand(Operand::Sp) }
-fn expr_rest() -> Expression { Expression::Operand(Operand::Rest) }
 fn expr_imm(n: usize) -> Expression { Expression::Operand(Operand::Imm(n)) }
 fn expr_self() -> Expression { Expression::Operand(Operand::OpSelf) }
 fn expr_tos() -> Expression { Expression::Operand(Operand::Tos) }
@@ -99,8 +97,8 @@ fn adjust_sp_before_call(frame_size: usize) -> Vec<IntermediateCode> {
     // sp -= frame_size + 2 + &rest_modifier, &rest_modifier = 0
     let amount = new_box_imm(frame_size + 2);
     vec![
-        IntermediateCode::Assign(expr_sp(), Expression::Binary(BinaryOp::Subtract, new_box_sp(), Box::new(Expression::Binary(BinaryOp::Add, amount, new_box_rest())))),
-        IntermediateCode::Assign(expr_rest(), expr_imm(0))
+        IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Subtract, new_box_sp(), Box::new(Expression::Binary(BinaryOp::Add, amount, new_box_rest())))),
+        IntermediateCode::Assign(Operand::Rest, expr_imm(0))
     ]
 }
 
@@ -112,17 +110,17 @@ enum What {
 fn apply_to_op(op: Operand, what: What) -> Vec<IntermediateCode> {
     match what {
         What::Add(n) => {
-            vec![ IntermediateCode::Assign(Expression::Operand(op.clone()), Expression::Binary(BinaryOp::Add, Box::new(Expression::Operand(op.clone())), new_box_imm(n))) ]
+            vec![ IntermediateCode::Assign(op.clone(), Expression::Binary(BinaryOp::Add, Box::new(Expression::Operand(op.clone())), new_box_imm(n))) ]
         }
         What::Subtract(n) => {
-            vec![ IntermediateCode::Assign(Expression::Operand(op.clone()), Expression::Binary(BinaryOp::Subtract, Box::new(Expression::Operand(op.clone())), new_box_imm(n))) ]
+            vec![ IntermediateCode::Assign(op.clone(), Expression::Binary(BinaryOp::Subtract, Box::new(Expression::Operand(op.clone())), new_box_imm(n))) ]
         }
     }
 }
 
 fn do_push(expr: Expression) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.push(IntermediateCode::Assign(expr_tos(), expr));
+    result.push(IntermediateCode::Assign(Operand::Tos, expr));
     result.append(&mut apply_to_op(Operand::Sp, What::Add(2)));
     result
 }
@@ -136,14 +134,14 @@ fn pre_pop() -> Vec<IntermediateCode> {
 fn binary_op_pop_acc(op: BinaryOp) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
     result.append(&mut pre_pop());
-    result.push(IntermediateCode::Assign(expr_acc(), Expression::Binary(op, new_box_tos(), new_box_acc())));
+    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_tos(), new_box_acc())));
     result
 }
 
 fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
     result.append(&mut pre_pop());
-    result.push(IntermediateCode::Assign(expr_acc(), Expression::Binary(op, new_box_acc(), new_box_tos())));
+    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_acc(), new_box_tos())));
     result
 }
 
@@ -151,7 +149,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
     let mut result: Vec<IntermediateCode> = Vec::new();
     match ins.bytes.first().unwrap() {
         0x00 | 0x01 => { // bnot
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Binary(BinaryOp::ExclusiveOr, new_box_acc(), new_box_imm(0xffff))));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(BinaryOp::ExclusiveOr, new_box_acc(), new_box_imm(0xffff))));
         },
         0x02 | 0x03 => { // add
             result.append(&mut binary_op_pop_acc(BinaryOp::Add));
@@ -184,67 +182,67 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut binary_op_acc_pop(BinaryOp::BitwiseOr));
         },
         0x16 | 0x17 => { // neg
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Unary(UnaryOp::Negate, new_box_acc())));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Unary(UnaryOp::Negate, new_box_acc())));
         },
         0x18 | 0x19 => { // not
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Unary(UnaryOp::LogicNot, new_box_acc())));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Unary(UnaryOp::LogicNot, new_box_acc())));
         },
         0x1a | 0x1b => { // eq?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::Equals));
         },
         0x1c | 0x1d => { // ne?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::NotEquals));
         },
         0x1e | 0x1f => { // gt?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::GreaterThan));
         },
         0x20 | 0x21 => { // ge?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::GreaterOrEqual));
         },
         0x22 | 0x23 => { // lt?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::LessThan));
         },
         0x24 | 0x25 => { // le?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::LessOrEqual));
         },
         0x26 | 0x27 => { // ugt?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::UnsignedGreaterThan));
         },
         0x28 | 0x29 => { // uge?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::UnsignedGreaterOrEqual));
         },
         0x2a | 0x2b => { // ult?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::UnsignedLess));
         },
         0x2c | 0x2d => { // ule?
-            result.push(IntermediateCode::Assign(expr_prev(), expr_acc()));
+            result.push(IntermediateCode::Assign(Operand::Prev, expr_acc()));
             result.append(&mut binary_op_pop_acc(BinaryOp::UnsignedLessOrEqual));
         },
         0x2e | 0x2f => { // bt
-            let true_offset = script::relpos0_to_absolute_offset(&ins);
+            let taken_offset = script::relpos0_to_absolute_offset(&ins);
             let next_offset = ins.offset + ins.bytes.len();
-            result.push(IntermediateCode::BranchTrue(true_offset, next_offset, expr_acc()));
+            result.push(IntermediateCode::BranchTrue{taken_offset, next_offset, expr: expr_acc()});
         },
         0x30 | 0x31 => { // bnt
-            let true_offset = script::relpos0_to_absolute_offset(&ins);
+            let taken_offset = script::relpos0_to_absolute_offset(&ins);
             let next_offset = ins.offset + ins.bytes.len();
-            result.push(IntermediateCode::BranchFalse(true_offset, next_offset, expr_acc()));
+            result.push(IntermediateCode::BranchFalse{taken_offset, next_offset, expr: expr_acc()});
         },
         0x32 | 0x33 => { // jmp
             let next_offset = script::relpos0_to_absolute_offset(&ins);
             result.push(IntermediateCode::BranchAlways(next_offset));
         },
         0x34 | 0x35 => { // ldi
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(Operand::Imm(ins.args[0]))));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::Imm(ins.args[0]))));
         },
         0x36 | 0x37 => { // push
             result.append(&mut do_push(expr_acc()));
@@ -257,12 +255,12 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x3c | 0x3d => { // dup
             result.append(&mut pre_pop());
-            result.push(IntermediateCode::Assign(expr_tmp(), Expression::Operand(Operand::Tos)));
+            result.push(IntermediateCode::Assign(Operand::Tmp, Expression::Operand(Operand::Tos)));
             result.append(&mut do_push(expr_tmp()));
             result.append(&mut do_push(expr_tmp()));
         },
         0x3e | 0x3f => { // link
-            result.push(IntermediateCode::Assign(expr_sp(), Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(ins.args[0]))));
+            result.push(IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(ins.args[0]))));
         },
         0x40 | 0x41 => { // call
             let addr = ins.args[0];
@@ -347,10 +345,10 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             }
 
             // TODO this needs verification to ensure it is correct
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Address(Box::new(Expression::Operand(op)))));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Address(Box::new(Expression::Operand(op)))));
         },
         0x5c | 0x5d => { // selfid
-            result.push(IntermediateCode::Assign(expr_acc(), expr_self()));
+            result.push(IntermediateCode::Assign(Operand::Acc, expr_self()));
         },
         0x5e | 0x5f => { // ?
             panic!("invalid opcode (5e/5f)");
@@ -360,11 +358,11 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x62 | 0x63 => { // ptoa
             let op = Operand::Property(new_box_imm(ins.args[0]));
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(op)));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x64 | 0x65 => { // atop
             let op = Operand::Property(new_box_imm(ins.args[0]));
-            result.push(IntermediateCode::Assign(Expression::Operand(op), Expression::Operand(Operand::Acc)));
+            result.push(IntermediateCode::Assign(op, Expression::Operand(Operand::Acc)));
         },
         0x66 | 0x67 => { // ptos
             let op = Operand::Property(new_box_imm(ins.args[0]));
@@ -373,17 +371,17 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         0x68 | 0x69 => { // stop
             let op = Operand::Property(new_box_imm(ins.args[0]));
             result.append(&mut pre_pop());
-            result.push(IntermediateCode::Assign(Expression::Operand(op), expr_tos()));
+            result.push(IntermediateCode::Assign(op, expr_tos()));
         },
         0x6a | 0x6b => { // iptoa
             let op = Operand::Property(new_box_imm(ins.args[0]));
             result.append(&mut apply_to_op(op.clone(), What::Add(1)));
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(op)));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x6c | 0x6d => { // dptoa
             let op = Operand::Property(new_box_imm(ins.args[0]));
             result.append(&mut apply_to_op(op.clone(), What::Subtract(1)));
-            result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(op)));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x6e | 0x6f => { // iptos
             let op = Operand::Property(new_box_imm(ins.args[0]));
@@ -397,7 +395,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x72 | 0x73 => { // lofsa
             let offset = ins.args[0];
-            result.push(IntermediateCode::Assign(expr_acc(), expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
+            result.push(IntermediateCode::Assign(Operand::Acc, expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
         },
         0x74 | 0x75 => { // lofss
             let offset = ins.args[0];
@@ -443,10 +441,10 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
 
 
             if oper == 2 { // inc+load
-                result.push(IntermediateCode::Assign(Expression::Operand(op.clone()), Expression::Binary(BinaryOp::Add, Box::new(Expression::Operand(op.clone())), new_box_imm(1))));
+                result.push(IntermediateCode::Assign(op.clone(), Expression::Binary(BinaryOp::Add, Box::new(Expression::Operand(op.clone())), new_box_imm(1))));
                 oper = 0;
             } else if oper == 3 { // dec+load
-                result.push(IntermediateCode::Assign(Expression::Operand(op.clone()), Expression::Binary(BinaryOp::Subtract, Box::new(Expression::Operand(op.clone())), new_box_imm(1))));
+                result.push(IntermediateCode::Assign(op.clone(), Expression::Binary(BinaryOp::Subtract, Box::new(Expression::Operand(op.clone())), new_box_imm(1))));
                 oper = 0;
             }
 
@@ -455,7 +453,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                     if on_stack {
                         result.append(&mut do_push(Expression::Operand(op.clone())));
                     } else {
-                        result.push(IntermediateCode::Assign(expr_acc(), Expression::Operand(op.clone())));
+                        result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op.clone())));
                     }
                 },
                 1 => { // store
@@ -466,7 +464,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                     } else {
                         source = Operand::Acc;
                     }
-                    result.push(IntermediateCode::Assign(Expression::Operand(op.clone()), Expression::Operand(source)));
+                    result.push(IntermediateCode::Assign(op, Expression::Operand(source)));
                 },
                 _ => { unreachable!() }
             }
