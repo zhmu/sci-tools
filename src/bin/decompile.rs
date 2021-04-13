@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -270,6 +270,9 @@ fn main() -> Result<(), ScriptError> {
             script::BlockType::Code => {
                 let code_blocks = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&code_blocks);
+
+                flow::analyse_inout(&mut graph);
+
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph)?;
 

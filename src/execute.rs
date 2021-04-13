@@ -7,7 +7,7 @@ const STACK_SIZE: usize = 32;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
-    acc: intermediate::Expression,
+    pub acc: intermediate::Expression,
     rest: intermediate::Expression,
     pub sp: intermediate::Expression,
     prev: intermediate::Expression,
@@ -130,12 +130,13 @@ fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<usize>) -> Option<usize>
     None
 }
 
-fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<usize> {
+pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<usize> {
     return match expr {
         intermediate::Expression::Operand(intermediate::Operand::Imm(n)) => { Some(*n) },
         intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { None },
         intermediate::Expression::Binary(op, a, b) => {
             let a = expr_to_value(state, a);
             let b = expr_to_value(state, b);
@@ -206,7 +207,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
     }
 }
 
-fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> intermediate::Expression {
+pub fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> intermediate::Expression {
     simplify_expr2(state, &mut HashSet::new(), expr.clone())
 }
 
