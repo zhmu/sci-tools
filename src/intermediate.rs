@@ -1,5 +1,13 @@
 use crate::{disassemble, script};
 
+use std::convert::TryInto;
+
+pub type Value = u16;
+pub type Register = Value;
+pub type Offset = Value;
+pub type ScriptID = Value;
+pub type FrameSize = Value;
+
 #[derive(Debug,Clone)]
 pub enum Operand {
     Global(Box<Expression>),
@@ -7,7 +15,7 @@ pub enum Operand {
     Temp(Box<Expression>),
     Param(Box<Expression>),
     Property(Box<Expression>),
-    Imm(usize),
+    Imm(Register),
     Acc,
     Prev,
     Sp,
@@ -58,27 +66,27 @@ pub enum Expression {
 #[derive(Debug,Clone)]
 pub enum IntermediateCode {
     Assign(Operand, Expression),
-    BranchTrue{ taken_offset: usize, next_offset: usize, expr: Expression },
-    BranchFalse{ taken_offset: usize, next_offset: usize, expr: Expression },
-    BranchAlways(usize),
-    Call(usize, usize),
-    KCall(usize, usize),
-    CallE(usize, usize, usize),
+    BranchTrue{ taken_offset: Offset, next_offset: Offset, expr: Expression },
+    BranchFalse{ taken_offset: Offset, next_offset: Offset, expr: Expression },
+    BranchAlways(Offset),
+    Call(Offset, FrameSize),
+    KCall(Register, FrameSize),
+    CallE(ScriptID, Register, FrameSize),
     Return(),
-    Send(Expression, usize),
-    Class(usize),
+    Send(Expression, FrameSize),
+    Class(Register),
 }
 
 #[derive(Debug,Clone)]
 pub struct Instruction {
-    pub offset: usize,
+    pub offset: Offset,
     pub length: usize,
     pub ops: Vec<IntermediateCode>,
 }
 
 fn expr_acc() -> Expression { Expression::Operand(Operand::Acc) }
 fn expr_prev() -> Expression { Expression::Operand(Operand::Prev) }
-fn expr_imm(n: usize) -> Expression { Expression::Operand(Operand::Imm(n)) }
+fn expr_imm(n: Register) -> Expression { Expression::Operand(Operand::Imm(n)) }
 fn expr_self() -> Expression { Expression::Operand(Operand::OpSelf) }
 fn expr_tos() -> Expression { Expression::Operand(Operand::Tos) }
 fn expr_tmp() -> Expression { Expression::Operand(Operand::Tmp) }
@@ -87,13 +95,13 @@ fn new_box_expr(op: Operand) -> Box<Expression> {
     Box::new(Expression::Operand(op))
 }
 
-fn new_box_imm(n: usize) -> Box<Expression> { new_box_expr(Operand::Imm(n)) }
+fn new_box_imm(n: Register) -> Box<Expression> { new_box_expr(Operand::Imm(n)) }
 fn new_box_acc() -> Box<Expression> { new_box_expr(Operand::Acc) }
 fn new_box_sp() -> Box<Expression> { new_box_expr(Operand::Sp) }
 fn new_box_rest() -> Box<Expression> { new_box_expr(Operand::Rest) }
 fn new_box_tos() -> Box<Expression> { new_box_expr(Operand::Tos) }
 
-fn adjust_sp_before_call(frame_size: usize) -> Vec<IntermediateCode> {
+fn adjust_sp_before_call(frame_size: FrameSize) -> Vec<IntermediateCode> {
     // sp -= frame_size + 2 + &rest_modifier, &rest_modifier = 0
     let amount = new_box_imm(frame_size + 2);
     vec![
@@ -103,8 +111,8 @@ fn adjust_sp_before_call(frame_size: usize) -> Vec<IntermediateCode> {
 }
 
 enum What {
-    Add(usize),
-    Subtract(usize)
+    Add(Register),
+    Subtract(Register)
 }
 
 fn apply_to_op(op: Operand, what: What) -> Vec<IntermediateCode> {
@@ -229,12 +237,12 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x2e | 0x2f => { // bt
             let taken_offset = script::relpos0_to_absolute_offset(&ins);
-            let next_offset = ins.offset + ins.bytes.len();
+            let next_offset: Offset = (ins.offset + ins.bytes.len()).try_into().unwrap();
             result.push(IntermediateCode::BranchTrue{taken_offset, next_offset, expr: expr_acc()});
         },
         0x30 | 0x31 => { // bnt
             let taken_offset = script::relpos0_to_absolute_offset(&ins);
-            let next_offset = ins.offset + ins.bytes.len();
+            let next_offset: Offset = (ins.offset + ins.bytes.len()).try_into().unwrap();
             result.push(IntermediateCode::BranchFalse{taken_offset, next_offset, expr: expr_acc()});
         },
         0x32 | 0x33 => { // jmp
@@ -242,13 +250,15 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.push(IntermediateCode::BranchAlways(next_offset));
         },
         0x34 | 0x35 => { // ldi
-            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::Imm(ins.args[0]))));
+            let imm: Register = ins.args[0];
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::Imm(imm))));
         },
         0x36 | 0x37 => { // push
             result.append(&mut do_push(expr_acc()));
         },
         0x38 | 0x39 => { // pushi
-            result.append(&mut do_push(expr_imm(ins.args[0])));
+            let imm: Register = ins.args[0];
+            result.append(&mut do_push(expr_imm(imm)));
         },
         0x3a | 0x3b => { // toss
             result.append(&mut apply_to_op(Operand::Sp, What::Subtract(2)));
@@ -260,34 +270,35 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut do_push(expr_tmp()));
         },
         0x3e | 0x3f => { // link
-            result.push(IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(ins.args[0]))));
+            let amount: Register = ins.args[0];
+            result.push(IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(amount))));
         },
         0x40 | 0x41 => { // call
-            let addr = ins.args[0];
-            let frame_size = ins.args[1];
+            let addr: Register = ins.args[0];
+            let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::Call(addr, frame_size));
         },
         0x42 | 0x43 => { // kcall
             let addr = ins.args[0];
-            let frame_size = ins.args[1];
+            let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::KCall(addr, frame_size));
         },
         0x44 | 0x45 => { // callb
-            let script: usize = 0;
+            let script: ScriptID = 0;
             let disp_index = ins.args[0];
-            let frame_size = ins.args[1];
+            let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::CallE(script, disp_index, frame_size));
         },
         0x46 | 0x47 => { // calle
-            let script = ins.args[0];
+            let script: ScriptID = ins.args[0];
             let disp_index = ins.args[1];
-            let frame_size = ins.args[2];
+            let frame_size: FrameSize = ins.args[2];
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::CallE(script, disp_index, frame_size));
@@ -296,35 +307,35 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.push(IntermediateCode::Return());
         },
         0x4a | 0x4b => { // send
-            let frame_size = ins.args[0];
+            let frame_size: FrameSize = ins.args[0];
             result.push(IntermediateCode::Send(expr_acc(), frame_size));
         },
         0x4c | 0x4d | 0x4e | 0x4f => { // ?
             panic!("invalid opcode (4c/4d/4e/4f)");
         },
         0x50 | 0x51 => { // class
-            let func = ins.args[0];
+            let func: Register = ins.args[0];
             result.push(IntermediateCode::Class(func));
         },
         0x52 | 0x53 => { // ?
             panic!("invalid opcode (52/53)");
         },
         0x54 | 0x55 => { // self
-            let frame_size = ins.args[0];
+            let frame_size: FrameSize = ins.args[0];
             result.push(IntermediateCode::Send(expr_self(), frame_size));
         },
         0x56 | 0x57 => { // super
-            let class = ins.args[0];
-            let frame_size = ins.args[1];
+            let class: Register = ins.args[0];
+            let frame_size: FrameSize = ins.args[1];
             result.push(IntermediateCode::Send(expr_imm(class), frame_size));
         },
         0x58 | 0x59 => { // &rest
-            let _param_index = ins.args[0];
+            let _param_index: Register = ins.args[0];
             todo!("&rest");
         },
         0x5a | 0x5b => { // lea
-            let vt = ins.args[0];
-            let vi = ins.args[1];
+            let vt: Register = ins.args[0];
+            let vi: Register = ins.args[1];
             let vtype = (vt >> 1) & 3;
 
             let arg;
@@ -394,12 +405,14 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut do_push(Expression::Operand(op)));
         },
         0x72 | 0x73 => { // lofsa
-            let offset = ins.args[0];
-            result.push(IntermediateCode::Assign(Operand::Acc, expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
+            let offset: Register = ins.args[0];
+            let addr: usize = ins.offset + ins.bytes.len() + offset as usize;
+            result.push(IntermediateCode::Assign(Operand::Acc, expr_imm((addr & 0xffff) as Register)));
         },
         0x74 | 0x75 => { // lofss
-            let offset = ins.args[0];
-            result.append(&mut do_push(expr_imm((ins.offset + ins.bytes.len() + offset) & 0xffff)));
+            let offset: Register = ins.args[0];
+            let addr: usize = ins.offset + ins.bytes.len() + offset as usize;
+            result.append(&mut do_push(expr_imm((addr & 0xffff) as Register)));
         },
         0x76 | 0x77 => { // push0
             result.append(&mut do_push(expr_imm(0)));
@@ -423,7 +436,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             let mut oper = (opcode >> 5) & 3;
 
             let arg;
-            let index = ins.args[0];
+            let index: Register = ins.args[0];
             if acc_modifier {
                 arg = Expression::Binary(BinaryOp::Add, new_box_imm(index), new_box_acc());
             } else {
@@ -470,5 +483,5 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             }
         }
     }
-    Instruction{ offset: ins.offset, length: ins.bytes.len(), ops: result }
+    Instruction{ offset: ins.offset as Offset, length: ins.bytes.len(), ops: result }
 }

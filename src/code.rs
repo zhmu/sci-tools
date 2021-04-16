@@ -14,14 +14,14 @@ pub struct CodeFragment {
 }
 
 impl CodeFragment {
-    pub fn get_start_offset(&self) -> usize {
+    pub fn get_start_offset(&self) -> u16 {
         let ii = self.instructions.first().unwrap();
         ii.offset
     }
 
-    pub fn get_end_offset(&self) -> usize {
+    pub fn get_end_offset(&self) -> u16 {
         let ii = self.instructions.last().unwrap();
-        ii.offset + ii.length
+        (ii.offset as usize + ii.length) as u16
     }
 
     pub fn as_str(&self) -> String {
@@ -89,7 +89,7 @@ pub type CodeGraph<'a> = Graph<CodeNode<'a>, CodeEdge>;
 #[derive(Copy,Clone)]
 pub enum OffsetIndex {
     None,
-    Offset(usize),
+    Offset(u16),
     Index(usize),
 }
 

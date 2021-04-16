@@ -81,22 +81,22 @@ pub fn get_string(data: &[u8]) -> &str {
 }
 
 // Note: always uses the first argument
-pub fn relpos0_to_absolute_offset(ins: &disassemble::Instruction) -> usize
+pub fn relpos0_to_absolute_offset(ins: &disassemble::Instruction) -> u16
 {
     let a_type = &ins.opcode.arg[0];
-    let a_value = ins.args[0];
-    let offset = ins.offset + ins.bytes.len();
+    let a_value: usize = ins.args[0].into();
+    let offset: usize = ins.offset as usize + ins.bytes.len();
     match a_type {
         opcode::Arg::RelPos8 => {
             if (a_value & 0x80) != 0 {
                 panic!("implement signed bits here");
             }
             let j_offset: usize = offset + a_value;
-            j_offset
+            j_offset as u16
         }
         opcode::Arg::RelPos16 => {
             let j_offset = (offset + a_value) & 0xffff;
-            j_offset
+            j_offset as u16
         }
         _ => { panic!("only to be called with relative positions"); }
     }

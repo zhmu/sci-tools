@@ -7,7 +7,7 @@ use std::collections::HashSet;
 #[derive(Debug,PartialEq,Eq,Hash,Copy,Clone)]
 enum UsedRegister {
     Acc,
-    Stack(usize)
+    Stack(intermediate::Value)
 }
 
 fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression, regs: &mut HashSet<UsedRegister>) {
@@ -42,7 +42,7 @@ fn find_regs_in_expr(state: &execute::VMState, expr: &intermediate::Expression) 
     result
 }
 
-fn remove_unreachable_stack_regs(input: &mut HashSet<UsedRegister>, sp: usize) -> HashSet<UsedRegister> {
+fn remove_unreachable_stack_regs(input: &mut HashSet<UsedRegister>, sp: intermediate::Register) -> HashSet<UsedRegister> {
     let mut result: HashSet<UsedRegister> = HashSet::new();
     for reg in input.drain() {
         match reg {

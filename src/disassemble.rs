@@ -2,13 +2,15 @@ use crate::opcode;
 use crate::script;
 use crate::stream;
 
-fn get_u8(stream: &mut stream::Streamer) -> usize {
-    stream.get_byte() as usize
+pub type ArgType = u16;
+
+fn get_u8(stream: &mut stream::Streamer) -> ArgType {
+    stream.get_byte() as ArgType
 }
 
-fn get_u16(stream: &mut stream::Streamer) -> usize {
-    let a = stream.get_byte() as usize;
-    let b = stream.get_byte() as usize;
+fn get_u16(stream: &mut stream::Streamer) -> ArgType {
+    let a = stream.get_byte() as ArgType;
+    let b = stream.get_byte() as ArgType;
     (b << 8) + a
 }
 
@@ -16,7 +18,7 @@ pub struct Instruction<'a> {
     pub offset: usize,
     pub bytes: &'a [u8],
     pub opcode: &'static opcode::Opcode,
-    pub args: Vec<usize>,
+    pub args: Vec<ArgType>,
 }
 
 pub struct Disassembler<'a> {
@@ -41,7 +43,7 @@ impl<'a> Iterator for Disassembler<'a> {
 
         let offset = self.stream.get_offset();
         let opcode = &opcode::OPCODES[self.stream.get_byte() as usize];
-        let mut args: Vec<usize> = Vec::new();
+        let mut args: Vec<ArgType> = Vec::new();
         for arg in opcode.arg {
             match arg {
                 opcode::Arg::RelPos8 | opcode::Arg::Imm8 => {

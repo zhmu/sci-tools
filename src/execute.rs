@@ -3,7 +3,7 @@ use crate::{intermediate};
 use std::fmt;
 use std::collections::HashSet;
 
-const STACK_SIZE: usize = 32;
+const STACK_SIZE: intermediate::Value = 32;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
@@ -26,7 +26,7 @@ impl VMState {
     }
 }
 
-fn get_imm_value(expr: &intermediate::Expression) -> Option<usize> {
+fn get_imm_value(expr: &intermediate::Expression) -> Option<intermediate::Register> {
     if let intermediate::Expression::Operand(op) = expr {
         if let intermediate::Operand::Imm(n) = op {
             return Some(*n);
@@ -45,14 +45,14 @@ fn format_expr(expr: &intermediate::Expression) -> String {
 impl fmt::Display for VMState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut stack: String = String::new();
-        let stack_size: usize;
+        let stack_size: intermediate::Value;
         if let Some(sp) = get_imm_value(&self.sp) {
             stack_size = sp;
         } else {
             stack_size = STACK_SIZE - 1;
         }
         for n in 0..=stack_size {
-            stack += &format!(" {}", format_expr(&self.stack[n])).to_string();
+            stack += &format!(" {}", format_expr(&self.stack[n as usize])).to_string();
         }
         write!(f, "acc: {} rest: {} prev: {}, sp: {} stack{}", format_expr(&self.acc), format_expr(&self.rest), format_expr(&self.prev), format_expr(&self.sp), stack)
     }
@@ -63,9 +63,9 @@ pub enum ResultOp {
     AssignProperty(intermediate::Expression, intermediate::Expression),
     AssignGlobal(intermediate::Expression, intermediate::Expression),
     AssignTemp(intermediate::Expression, intermediate::Expression),
-    CallE(usize, usize, Vec<intermediate::Expression>),
-    Call(usize, Vec<intermediate::Expression>),
-    KCall(usize, Vec<intermediate::Expression>),
+    CallE(intermediate::Value, intermediate::Value, Vec<intermediate::Expression>),
+    Call(intermediate::Value, Vec<intermediate::Expression>),
+    KCall(intermediate::Value, Vec<intermediate::Expression>),
     Return(),
 }
 
@@ -89,7 +89,7 @@ enum StateEnum {
     Rest
 }
 
-fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<usize>, b: Option<usize>) -> Option<usize> {
+fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<intermediate::Value>, b: Option<intermediate::Value>) -> Option<intermediate::Value> {
     if a.is_some() && b.is_some() {
         let a = a.unwrap();
         let b = b.unwrap();
@@ -119,7 +119,7 @@ fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<usize>, b: Option<usiz
     None
 }
 
-fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<usize>) -> Option<usize> {
+fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<intermediate::Value>) -> Option<intermediate::Value> {
     if a.is_some() {
         let a = a.unwrap();
         return Some(match op {
@@ -130,7 +130,7 @@ fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<usize>) -> Option<usize>
     None
 }
 
-pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<usize> {
+pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<intermediate::Value> {
     return match expr {
         intermediate::Expression::Operand(intermediate::Operand::Imm(n)) => { Some(*n) },
         intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { None },
@@ -183,7 +183,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Operand(intermediate::Operand::Tos) => {
             if let Some(index) = expr_to_value(state, &state.sp) {
                 assert_eq!(index % 2, 0);
-                let tos = state.stack[index / 2].clone();
+                let tos = state.stack[(index / 2) as usize].clone();
                 //println!("simplify_expr2: reading tos index {} -> {:?}", index / 2, tos);
                 return simplify_expr2(state, state_seen, tos);
             }
@@ -211,12 +211,12 @@ pub fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> in
     simplify_expr2(state, &mut HashSet::new(), expr.clone())
 }
 
-fn gather_params(state: &mut VMState, sp: usize, frame_size: usize) -> Vec<intermediate::Expression> {
+fn gather_params(state: &mut VMState, sp: intermediate::Value, frame_size: intermediate::FrameSize) -> Vec<intermediate::Expression> {
     assert_eq!(sp % 2, 0);
 
     let mut params: Vec<intermediate::Expression> = Vec::new();
     for n in 0..=(frame_size / 2) {
-        let expr = state.stack[sp / 2 + n].clone();
+        let expr = state.stack[(sp / 2 + n) as usize].clone();
         let expr = simplify_expr(state, &expr);
         params.push(expr);
     }
@@ -265,7 +265,7 @@ impl VM {
                     intermediate::Operand::Tos => {
                         if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
                             assert_eq!(index % 2, 0);
-                            self.state.stack[index / 2] = simplify_expr(&mut self.state, expr);
+                            self.state.stack[(index / 2) as usize] = simplify_expr(&mut self.state, expr);
                         } else {
                             panic!("could not simplify sp");
                         }
