@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 use std::env;
+use std::convert::TryInto;
 
-type LabelMap = HashMap<usize, String>;
+type LabelMap = HashMap<u16, String>;
 
 #[derive(Debug)]
 enum ScriptError {
@@ -40,11 +41,11 @@ impl From<object_class::ObjectClassError> for ScriptError {
     }
 }
 
-fn get_pretty_address(script: &script::Script, address: usize, labels: &LabelMap) -> String {
+fn get_pretty_address(script: &script::Script, address: u16, labels: &LabelMap) -> String {
     if let Some(label) = labels.get(&address) {
         return format!("{} ({:x})", label, address);
     }
-    if let Some(string) = script.get_string(address) {
+    if let Some(string) = script.get_string(address as usize) {
         return format!(r#""{}" {:x}"#, string, address);
     }
     return format!("0x{:x}", address).to_string();
@@ -53,7 +54,7 @@ fn get_pretty_address(script: &script::Script, address: usize, labels: &LabelMap
 fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, labels: &LabelMap) {
     let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
-        let offset = ins.offset;
+        let offset: u16 = ins.offset.try_into().unwrap();
         if let Some(label) = labels.get(&offset) {
             println!("{}:", label);
         }
@@ -87,7 +88,7 @@ fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, label
         }
 
         if ins.bytes[0] == 0x72 || ins.bytes[0] == 0x73 { /* lofsa */
-            let address = (offset + ins.bytes.len() + ins.args[0]) & 0xffff;
+            let address = ((offset as usize + ins.bytes.len() + ins.args[0] as usize) & 0xffff) as u16;
             let pretty_address = get_pretty_address(&script, address, &labels);
             line += &format!(" # {}", &pretty_address).as_str();
         }
@@ -121,18 +122,18 @@ fn decode_said(block: &script::ScriptBlock, vocab: &vocab::Vocab000) -> Result<(
 fn generate_object_class_labels(block: &script::ScriptBlock, object_class: &object_class::ObjectClass, selector_vocab: &vocab::Vocab997, labels: &mut LabelMap) {
     let obj_offset = block.base + 8; // skip magic/local var offset
     let label = format!("{}", object_class.name);
-    labels.insert(obj_offset, label); // TODO need to add base offset here?
+    labels.insert(obj_offset.try_into().unwrap(), label); // TODO need to add base offset here?
 
     for func in &object_class.functions {
         let label = format!("{}::{}", object_class.name, selector_vocab.get_selector_name(func.selector as usize));
-        labels.insert(func.offset as usize, label); // TODO need to add base offset here?
+        labels.insert(func.offset.try_into().unwrap(), label); // TODO need to add base offset here?
     }
 }
 
 fn generate_said_labels(saids: &said::Said, labels: &mut LabelMap) {
     for said in &saids.items {
         let label = format!("said_{:x}", said.offset);
-        labels.insert(said.offset as usize, label);
+        labels.insert(said.offset.try_into().unwrap(), label);
     }
 }
 
@@ -152,7 +153,7 @@ fn generate_export_labels(block: &script::ScriptBlock, script_id: i16, labels: &
 
     let num_exports = rdr.read_u16::<LittleEndian>()?;
     for n in 0..num_exports {
-        let offset = rdr.read_u16::<LittleEndian>()? as usize;
+        let offset = rdr.read_u16::<LittleEndian>()?;
 
         let label = format!("export_s{}_{}", script_id, n);
         labels.insert(offset, label);
