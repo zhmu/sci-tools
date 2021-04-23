@@ -3,7 +3,7 @@ use crate::{intermediate};
 use std::fmt;
 use std::collections::HashSet;
 
-const STACK_SIZE: intermediate::Value = 32;
+const STACK_SIZE: intermediate::Value = 128;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
@@ -94,11 +94,11 @@ fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<intermediate::Value>, 
         let a = a.unwrap();
         let b = b.unwrap();
         return Some(match op {
-            intermediate::BinaryOp::Add => { a + b },
-            intermediate::BinaryOp::Subtract => { a - b },
-            intermediate::BinaryOp::Multiply => { a * b },
-            intermediate::BinaryOp::Divide => { a / b },
-            intermediate::BinaryOp::Modulo => { a % b },
+            intermediate::BinaryOp::Add => { a.overflowing_add(b).0 },
+            intermediate::BinaryOp::Subtract => { a.overflowing_sub(b).0 },
+            intermediate::BinaryOp::Multiply => { a.overflowing_mul(b).0 },
+            intermediate::BinaryOp::Divide => { a.overflowing_div(b).0 },
+            intermediate::BinaryOp::Modulo => { a.overflowing_rem(b).0 },
             intermediate::BinaryOp::ShiftRight => { a >> b },
             intermediate::BinaryOp::ShiftLeft => { a << b },
             intermediate::BinaryOp::ExclusiveOr => { a ^ b },
@@ -123,7 +123,7 @@ fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<intermediate::Value>) ->
     if a.is_some() {
         let a = a.unwrap();
         return Some(match op {
-            intermediate::UnaryOp::Negate => { todo!() },
+            intermediate::UnaryOp::Negate => { (-(a as i16)) as u16 },
             intermediate::UnaryOp::LogicNot => { if a == 0 { 1 } else { 0 }}
         })
     }
@@ -203,6 +203,10 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             let a = simplify_expr2(state, state_seen, *a);
             return intermediate::Expression::Unary(op, Box::new(a));
         },
+        intermediate::Expression::Address(a) => {
+            let a = simplify_expr2(state, state_seen, *a);
+            return intermediate::Expression::Address(Box::new(a));
+        }
         _ => { todo!("simplify_expr2: {:?}", expr); }
     }
 }

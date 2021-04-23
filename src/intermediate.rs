@@ -110,6 +110,13 @@ fn adjust_sp_before_call(frame_size: FrameSize) -> Vec<IntermediateCode> {
     ]
 }
 
+fn adjust_sp_before_send(frame_size: FrameSize) -> Vec<IntermediateCode> {
+    let amount = frame_size;
+    vec![
+        IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Subtract, new_box_sp(), new_box_imm(amount)))
+    ]
+}
+
 enum What {
     Add(Register),
     Subtract(Register)
@@ -308,6 +315,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x4a | 0x4b => { // send
             let frame_size: FrameSize = ins.args[0];
+            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_acc(), frame_size));
         },
         0x4c | 0x4d | 0x4e | 0x4f => { // ?
@@ -322,11 +330,13 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x54 | 0x55 => { // self
             let frame_size: FrameSize = ins.args[0];
+            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_self(), frame_size));
         },
         0x56 | 0x57 => { // super
             let class: Register = ins.args[0];
             let frame_size: FrameSize = ins.args[1];
+            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_imm(class), frame_size));
         },
         0x58 | 0x59 => { // &rest
