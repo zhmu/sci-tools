@@ -1,4 +1,4 @@
-use petgraph::graph::Graph;
+use petgraph::graph::{Graph, NodeIndex};
 use petgraph::visit::{NodeRef, EdgeRef, IntoNodeReferences};
 use petgraph::visit::NodeIndexable;
 
@@ -140,7 +140,9 @@ fn is_single_execute<'a>(node: &'a CodeNode) -> Option<&'a CodeFragment> {
     None
 }
 
-pub fn plot_graph(fname: &str, graph: &CodeGraph) -> Result<(), std::io::Error> {
+pub fn plot_graph<F>(fname: &str, graph: &CodeGraph, format_label: F) -> Result<(), std::io::Error>
+    where F: Fn(NodeIndex) -> String
+{
     let mut out_file = File::create(fname).unwrap();
     writeln!(out_file, "digraph G {{")?;
     for node in graph.node_references() {
@@ -159,6 +161,7 @@ pub fn plot_graph(fname: &str, graph: &CodeGraph) -> Result<(), std::io::Error> 
                 label += format!(" {}", o.as_str()).as_str();
             }
         }
+        label += format_label(node.id()).as_str();
         writeln!(out_file, "  {} [ label=\"{}\" shape=\"{}\"]", graph.to_index(node.id()), label, shape)?;
     }
     for edge in graph.edge_references() {

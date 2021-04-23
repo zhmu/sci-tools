@@ -274,13 +274,13 @@ fn main() -> Result<(), ScriptError> {
                 flow::analyse_inout(&mut graph);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
-                code::plot_graph(&out_fname, &graph)?;
+                code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
                 reduce::reduce_graph(&mut graph);
                 analyse_graph(&graph);
 
                 let out_fname = format!("dot/{:x}.dot", block.base);
-                code::plot_graph(&out_fname, &graph)?;
+                code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
                 let out_fname = format!("tmp/{:x}.txt", block.base);
                 write_code(&out_fname, &block, &labels, &graph)?;
