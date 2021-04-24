@@ -62,6 +62,8 @@ pub enum Expression {
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
     Address(Box<Expression>),
+    Class(Register),
+    KCall(Register, FrameSize)
 }
 
 #[derive(Debug,Clone)]
@@ -75,7 +77,6 @@ pub enum IntermediateCode {
     CallE(ScriptID, Register, FrameSize),
     Return(),
     Send(Expression, FrameSize),
-    Class(Register),
 }
 
 #[derive(Debug,Clone)]
@@ -159,6 +160,17 @@ fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
     result.append(&mut pre_pop());
     result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_acc(), new_box_tos())));
     result
+}
+
+fn does_kcall_return_void(nr: u16) -> bool {
+    // 0x1b and 0x31 conditionally return things
+    return match nr {
+        0x01 | 0x03 | 0x07 | 0x09 | 0x0b | 0x11 | 0x12 | 0x15 | 0x16 | 0x17 |
+        0x18 | 0x19 | 0x1a | 0x1d | 0x1e | 0x20 | 0x22 | 0x23 | 0x26 | 0x28 |
+        0x2a | 0x2c | 0x2e | 0x31 | 0x33 | 0x3b | 0x3c | 0x3d | 0x3f | 0x4f |
+        0x50 | 0x53 | 0x54 | 0x57 | 0x6a | 0x71 => { true },
+        _ => { false }
+    }
 }
 
 pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
@@ -289,11 +301,15 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.push(IntermediateCode::Call(addr, frame_size));
         },
         0x42 | 0x43 => { // kcall
-            let addr = ins.args[0];
+            let nr = ins.args[0];
             let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
-            result.push(IntermediateCode::KCall(addr, frame_size));
+            if does_kcall_return_void(nr) {
+                result.push(IntermediateCode::KCall(nr, frame_size));
+            } else {
+                result.push(IntermediateCode::Assign(Operand::Acc, Expression::KCall(nr, frame_size)));
+            }
         },
         0x44 | 0x45 => { // callb
             let script: ScriptID = 0;
@@ -324,7 +340,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x50 | 0x51 => { // class
             let func: Register = ins.args[0];
-            result.push(IntermediateCode::Class(func));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Class(func)));
         },
         0x52 | 0x53 => { // ?
             panic!("invalid opcode (52/53)");

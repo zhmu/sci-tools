@@ -63,6 +63,8 @@ pub enum ResultOp {
     AssignProperty(intermediate::Expression, intermediate::Expression),
     AssignGlobal(intermediate::Expression, intermediate::Expression),
     AssignTemp(intermediate::Expression, intermediate::Expression),
+    AssignLocal(intermediate::Expression, intermediate::Expression),
+    AssignHelperVar(usize, intermediate::Expression),
     CallE(intermediate::Value, intermediate::Value, Vec<intermediate::Expression>),
     Call(intermediate::Value, Vec<intermediate::Expression>),
     KCall(intermediate::Value, Vec<intermediate::Expression>),
@@ -86,7 +88,8 @@ enum StateEnum {
     Sp,
     Acc,
     Tmp,
-    Rest
+    Rest,
+    Prev
 }
 
 fn apply_binary_op(op: &intermediate::BinaryOp, a: Option<intermediate::Value>, b: Option<intermediate::Value>) -> Option<intermediate::Value> {
@@ -137,6 +140,11 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
+        intermediate::Expression::Class(_) => { None },
+        intermediate::Expression::Address(_) => { None },
+        intermediate::Expression::KCall(_, _) => { None },
         intermediate::Expression::Binary(op, a, b) => {
             let a = expr_to_value(state, a);
             let b = expr_to_value(state, b);
@@ -189,11 +197,21 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             }
             panic!("cannot resolve sp value for tos");
         },
+        intermediate::Expression::Operand(intermediate::Operand::Prev) => {
+            if !state_seen.contains(&StateEnum::Prev) {
+                state_seen.insert(StateEnum::Prev);
+                return simplify_expr2(state, state_seen, state.prev.clone());
+            }
+            return state.prev.clone();
+        },
         intermediate::Expression::Operand(intermediate::Operand::Imm(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { return expr.clone(); },
         intermediate::Expression::Binary(op, a, b) => {
             let a = simplify_expr2(state, state_seen, *a);
             let b = simplify_expr2(state, state_seen, *b);
@@ -206,8 +224,9 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Address(a) => {
             let a = simplify_expr2(state, state_seen, *a);
             return intermediate::Expression::Address(Box::new(a));
-        }
-        _ => { todo!("simplify_expr2: {:?}", expr); }
+        },
+        intermediate::Expression::Class(_) => { return expr.clone(); },
+        intermediate::Expression::KCall(_, _) => { return expr.clone(); },
     }
 }
 
@@ -296,6 +315,17 @@ impl VM {
                         let n = simplify_expr(&mut self.state, n);
                         self.ops.push(ResultOp::AssignGlobal(n, result));
                     },
+                    intermediate::Operand::Local(n) => {
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        let n = simplify_expr(&mut self.state, n);
+                        self.ops.push(ResultOp::AssignLocal(n, result));
+                    },
                     intermediate::Operand::Temp(n) => {
                         let result;
                         let expr = simplify_expr(&mut self.state, &expr);
@@ -306,6 +336,16 @@ impl VM {
                         }
                         let n = simplify_expr(&mut self.state, n);
                         self.ops.push(ResultOp::AssignTemp(n, result));
+                    },
+                    intermediate::Operand::HelperVariable(n) => {
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        self.ops.push(ResultOp::AssignHelperVar(*n, result));
                     },
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
@@ -356,7 +396,19 @@ impl VM {
                     panic!("could not simplify sp");
                 }
             },
-            op @ _ => { panic!("vm execute todo {:?}", op); }
+            intermediate::IntermediateCode::Send(expr, frame_size) => {
+                println!("Send: dest {:?}, args", expr);
+                if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
+                    assert_eq!(index % 2, 0);
+                    let base = index / 2;
+                    for n in 0..(*frame_size / 2) {
+                        println!("  send arg {:?} -> {:?}", n, self.state.stack[(base + n) as usize]);
+                    }
+                } else {
+                    panic!("could not simplify sp");
+                }
+                //panic!("vm execute send {:?} {:?}", expr, frame_size);
+            },
         }
     }
 }
