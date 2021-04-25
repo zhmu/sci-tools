@@ -1,4 +1,4 @@
-use crate::{intermediate, code, execute};
+use crate::{intermediate, code, execute, script};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -44,6 +44,7 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Address(_) => { },
         intermediate::Expression::Class(_) => { },
         intermediate::Expression::KCall(_, _) => { },
+        intermediate::Expression::Undefined => { },
     }
 }
 
@@ -76,27 +77,28 @@ fn process_expr_to_input_regs(state: &execute::VMState, expr: &intermediate::Exp
 fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
     if DEBUG_FLOW { println!("analyse_instructions: {:x}..{:x}", frag.get_start_offset(), frag.get_end_offset()); }
 
-    let mut state = execute::VMState::new();
-    state.sp = intermediate::Expression::Operand(intermediate::Operand::Imm(40));
     let mut inputs: HashSet<UsedRegister> = HashSet::new();
     let mut outputs: HashSet<UsedRegister> = HashSet::new();
 
+    let mut vm = execute::VM::new(&execute::VMState::new());
+    vm.state.sp = intermediate::Expression::Operand(intermediate::Operand::Imm(40));
+
     for ins in &frag.instructions {
         for op in &ins.ops {
-            if DEBUG_FLOW { println!(">> op {:?}", op); }
+            if DEBUG_FLOW { println!(">> op {:?} state {}", op, vm.state); }
+            vm.execute(&op);
+            if DEBUG_FLOW { println!(">> post op state {}", vm.state); }
+
             match op {
                 intermediate::IntermediateCode::Assign(op, expr) => {
-                    process_expr_to_input_regs(&state, expr, &mut inputs, &outputs);
+                    process_expr_to_input_regs(&vm.state, expr, &mut inputs, &outputs);
                     match op {
                         intermediate::Operand::Acc => {
-                            state.acc = execute::simplify_expr(&mut state, expr);
                             outputs.insert(UsedRegister::Acc);
                         },
-                        intermediate::Operand::Sp => {
-                            state.sp = execute::simplify_expr(&mut state, expr);
-                        },
+                        intermediate::Operand::Sp => { },
                         intermediate::Operand::Tos => {
-                            if let Some(sp) = execute::expr_to_value(&state, &state.sp) {
+                            if let Some(sp) = execute::expr_to_value(&vm.state, &vm.state.sp) {
                                 outputs.insert(UsedRegister::Stack(sp));
                             } else {
                                 panic!("cannot resolve sp value for tos");
@@ -107,20 +109,48 @@ fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
                 },
                 intermediate::IntermediateCode::BranchTrue{ taken_offset: _, next_offset: _, expr } |
                 intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr } => {
-                    process_expr_to_input_regs(&state, expr, &mut inputs, &outputs);
+                    process_expr_to_input_regs(&vm.state, expr, &mut inputs, &outputs);
                 },
                 intermediate::IntermediateCode::BranchAlways(_) => { },
                 intermediate::IntermediateCode::Call(_, _) | intermediate::IntermediateCode::CallE(_, _, _) => {
                     // For now, let's assume that calls always change the accumulator
                     outputs.insert(UsedRegister::Acc);
                 },
-                _ => { println!("TODO {:?}", op); }
+                intermediate::IntermediateCode::KCall(nr, _) => {
+                    if !script::does_kcall_return_void(*nr) {
+                        outputs.insert(UsedRegister::Acc);
+                    }
+                },
+                intermediate::IntermediateCode::Return() => { },
+                intermediate::IntermediateCode::Send(_, frame_size) => {
+                    let values = vm.get_stack_values(*frame_size);
+                    let n_args = (*frame_size as usize) / 2;
+
+                    println!("values {:?}", values);
+                    let mut n: usize = 0;
+                    while n < n_args {
+                        let selector = &values[n];
+                        let num_values = &values[n + 1];
+                        if let Some(num_values) = execute::expr_to_value(&vm.state, &num_values) {
+                            let num_values = num_values as usize;
+                            if DEBUG_FLOW {
+                                println!("SEND: selector {:?} num_values {:?} values {:?}", selector, num_values,
+                                    &values[n + 2..n + 2 + num_values]);
+                            }
+                            n += 2 + num_values;
+                            println!("TODO: flow/send: properly register inputs");
+                        } else {
+                            println!("couldn't resolve num values in send call {:?} - not analysing further", num_values);
+                            break;
+                        }
+                    }
+                }
             }
         }
     }
 
 
-    if let Some(sp) = execute::expr_to_value(&state, &state.sp) {
+    if let Some(sp) = execute::expr_to_value(&vm.state, &vm.state.sp) {
         outputs = remove_unreachable_stack_regs(&mut outputs, sp);
     } else {
         panic!("cannot resolve sp value");

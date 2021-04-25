@@ -12,17 +12,32 @@ pub struct VMState {
     pub sp: intermediate::Expression,
     prev: intermediate::Expression,
     tmp: intermediate::Expression,
-    stack: Vec<intermediate::Expression>
+    pub stack: Vec<intermediate::Expression>
 }
 
 impl VMState {
     pub fn new() -> Self {
+        let undef = intermediate::Expression::Undefined;
         let zero = intermediate::Expression::Operand(intermediate::Operand::Imm(0));
         let mut stack: Vec<intermediate::Expression> = Vec::new();
         for _ in 0..STACK_SIZE {
-            stack.push(zero.clone());
+            stack.push(undef.clone());
         }
-        VMState{ acc: zero.clone(), rest: zero.clone(), prev: zero.clone(), sp: zero.clone(), tmp: zero.clone(), stack }
+        VMState{ acc: undef.clone(), rest: zero.clone(), prev: undef.clone(), sp: zero.clone(), tmp: undef.clone(), stack }
+    }
+
+    fn get_sp(&self) -> intermediate::Register {
+        if let Some(sp) = expr_to_value(&self, &self.sp) {
+            return sp;
+        } else {
+            panic!("cannot resolve sp value");
+        }
+    }
+
+    fn get_sp_index(&self) -> usize {
+        let sp = self.get_sp() as usize;
+        assert_eq!(sp % 2, 0);
+        sp / 2
     }
 }
 
@@ -42,17 +57,33 @@ fn format_expr(expr: &intermediate::Expression) -> String {
     format!("{:?}", expr).to_string()
 }
 
+fn is_expr_undefined(expr: &intermediate::Expression) -> bool {
+    match expr {
+        intermediate::Expression::Undefined => { true },
+        _ => { false }
+    }
+}
+
 impl fmt::Display for VMState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut stack: String = String::new();
-        let stack_size: intermediate::Value;
+        let stack_size: usize;
         if let Some(sp) = get_imm_value(&self.sp) {
-            stack_size = sp;
+            stack_size = sp as usize;
         } else {
-            stack_size = STACK_SIZE - 1;
+            stack_size = STACK_SIZE as usize;
         }
-        for n in 0..=stack_size {
-            stack += &format!(" {}", format_expr(&self.stack[n as usize])).to_string();
+        let mut n: usize = 0;
+        while n <= stack_size / 2 && is_expr_undefined(&self.stack[n]) {
+            n += 1;
+        }
+        if n > 0 {
+            stack += &format!(" [Undef*{}]", n);
+        }
+
+        while n <= stack_size / 2 {
+            stack += &format!(" {}", format_expr(&self.stack[n])).to_string();
+            n += 1;
         }
         write!(f, "acc: {} rest: {} prev: {}, sp: {} stack{}", format_expr(&self.acc), format_expr(&self.rest), format_expr(&self.prev), format_expr(&self.sp), stack)
     }
@@ -64,10 +95,13 @@ pub enum ResultOp {
     AssignGlobal(intermediate::Expression, intermediate::Expression),
     AssignTemp(intermediate::Expression, intermediate::Expression),
     AssignLocal(intermediate::Expression, intermediate::Expression),
+    AssignParam(intermediate::Expression, intermediate::Expression),
     AssignHelperVar(usize, intermediate::Expression),
     CallE(intermediate::Value, intermediate::Value, Vec<intermediate::Expression>),
     Call(intermediate::Value, Vec<intermediate::Expression>),
     KCall(intermediate::Value, Vec<intermediate::Expression>),
+    Send(intermediate::Expression, intermediate::Expression, Vec<intermediate::Expression>),
+    Incomplete(String),
     Return(),
 }
 
@@ -145,6 +179,7 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Class(_) => { None },
         intermediate::Expression::Address(_) => { None },
         intermediate::Expression::KCall(_, _) => { None },
+        intermediate::Expression::Undefined => { None },
         intermediate::Expression::Binary(op, a, b) => {
             let a = expr_to_value(state, a);
             let b = expr_to_value(state, b);
@@ -189,13 +224,10 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             return state.rest.clone();
         },
         intermediate::Expression::Operand(intermediate::Operand::Tos) => {
-            if let Some(index) = expr_to_value(state, &state.sp) {
-                assert_eq!(index % 2, 0);
-                let tos = state.stack[(index / 2) as usize].clone();
-                //println!("simplify_expr2: reading tos index {} -> {:?}", index / 2, tos);
-                return simplify_expr2(state, state_seen, tos);
-            }
-            panic!("cannot resolve sp value for tos");
+            let index = state.get_sp_index();
+            let tos = state.stack[index].clone();
+            //println!("simplify_expr2: reading tos index {} -> {:?}", index, tos);
+            return simplify_expr2(state, state_seen, tos);
         },
         intermediate::Expression::Operand(intermediate::Operand::Prev) => {
             if !state_seen.contains(&StateEnum::Prev) {
@@ -227,6 +259,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         },
         intermediate::Expression::Class(_) => { return expr.clone(); },
         intermediate::Expression::KCall(_, _) => { return expr.clone(); },
+        intermediate::Expression::Undefined => { return expr.clone(); },
     }
 }
 
@@ -249,6 +282,15 @@ fn gather_params(state: &mut VMState, sp: intermediate::Value, frame_size: inter
 impl VM {
     pub fn new(state: &VMState) -> Self {
         VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone() }
+    }
+
+    pub fn get_stack_values(&self, frame_size: intermediate::Register) -> Vec<intermediate::Expression> {
+        let mut result: Vec<intermediate::Expression> = Vec::new();
+        let sp = self.state.get_sp() / 2;
+        for n in 0..(frame_size / 2) {
+            result.push(self.state.stack[(sp + n) as usize].clone());
+        }
+        result
     }
 
     pub fn execute(&mut self, ic: &intermediate::IntermediateCode) {
@@ -286,12 +328,8 @@ impl VM {
                         }
                     },
                     intermediate::Operand::Tos => {
-                        if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
-                            assert_eq!(index % 2, 0);
-                            self.state.stack[(index / 2) as usize] = simplify_expr(&mut self.state, expr);
-                        } else {
-                            panic!("could not simplify sp");
-                        }
+                        let index = self.state.get_sp_index();
+                        self.state.stack[index] = simplify_expr(&mut self.state, expr);
                     },
                     intermediate::Operand::Property(n) => {
                         let result;
@@ -347,6 +385,17 @@ impl VM {
                         }
                         self.ops.push(ResultOp::AssignHelperVar(*n, result));
                     },
+                    intermediate::Operand::Param(n) => {
+                        let result;
+                        let expr = simplify_expr(&mut self.state, &expr);
+                        if let Some(v) = expr_to_value(&self.state, &expr) {
+                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
+                        } else {
+                            result = expr.clone();
+                        }
+                        let n = simplify_expr(&mut self.state, n);
+                        self.ops.push(ResultOp::AssignParam(n, result));
+                    },
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
             },
@@ -397,17 +446,30 @@ impl VM {
                 }
             },
             intermediate::IntermediateCode::Send(expr, frame_size) => {
-                println!("Send: dest {:?}, args", expr);
-                if let Some(index) = expr_to_value(&self.state, &self.state.sp) {
-                    assert_eq!(index % 2, 0);
-                    let base = index / 2;
-                    for n in 0..(*frame_size / 2) {
-                        println!("  send arg {:?} -> {:?}", n, self.state.stack[(base + n) as usize]);
+                let values = self.get_stack_values(*frame_size);
+                let expr = simplify_expr(&mut self.state, &expr);
+
+                let frame_size = (*frame_size as usize) / 2;
+                let mut n: usize = 0;
+                while n < frame_size {
+                    let selector = &values[n];
+                    n += 1;
+                    if let Some(num_values) = expr_to_value(&self.state, &values[n]) {
+                        let num_values = num_values as usize;
+                        n += 1;
+                        let mut args: Vec<intermediate::Expression> = Vec::new();
+                        for m in 0..num_values {
+                            let expr = simplify_expr(&mut self.state, &values[n + m]);
+                            args.push(expr);
+                        }
+                        self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
+                        n += num_values;
+                    } else {
+                        let msg = format!("could not convert num_values {:?} to number", values[n]);
+                        self.ops.push(ResultOp::Incomplete(msg));
+                        break;
                     }
-                } else {
-                    panic!("could not simplify sp");
                 }
-                //panic!("vm execute send {:?} {:?}", expr, frame_size);
             },
         }
     }
