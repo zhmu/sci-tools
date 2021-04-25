@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -107,6 +107,66 @@ fn analyse_graph(graph: &code::CodeGraph) {
     }
 }
 
+fn split_if_code<'a>(ops: &'a Vec<code::Operation>) -> (&'a [intermediate::Instruction], &'a [intermediate::Instruction]) {
+    assert_eq!(1, ops.len());
+
+    if let code::Operation::Execute(frag) = ops.first().unwrap() {
+        let n = frag.instructions.len();
+        return (&frag.instructions[0..n-1], &frag.instructions[n-1..]);
+    } else {
+        unreachable!();
+    }
+}
+
+fn convert_instructions(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+    let mut vm = execute::VM::new(&state);
+    for ins in instructions {
+        for op in &ins.ops {
+            if DEBUG_VM {
+                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+            }
+            vm.execute(&op);
+        }
+    }
+    *state = vm.state;
+    let mut result: String = String::new();
+    for rop in &vm.ops {
+        result += format!("{}{:?}\n", indent, rop).as_str();
+    }
+    match vm.branch {
+        execute::BranchIf::True(_) | execute::BranchIf::False(_) => { unreachable!() },
+        execute::BranchIf::Never => { }
+    }
+    result
+}
+
+fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+    let mut vm = execute::VM::new(&state);
+    for ins in instructions {
+        for op in &ins.ops {
+            if DEBUG_VM {
+                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+            }
+            vm.execute(&op);
+        }
+    }
+    *state = vm.state;
+    let mut result: String = String::new();
+    for rop in &vm.ops {
+        result += format!("{}{:?}\n", indent, rop).as_str();
+    }
+    match vm.branch {
+        execute::BranchIf::True(expr) => {
+            result += format!("{}TRUE CONDITION {:?}\n", indent, expr).as_str();
+        },
+        execute::BranchIf::False(expr) => {
+            result += format!("{}FALSE CONDITION {:?}\n", indent, expr).as_str();
+        },
+        execute::BranchIf::Never => { unreachable!() }
+    }
+    result
+}
+
 fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
@@ -115,13 +175,19 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
     for op in ops {
         match op {
             code::Operation::IfElse(code, true_code, false_code) => {
-                let code = convert_code(state, &code, level + 1);
+                assert_eq!(1, code.len());
+                let (code, if_condition) = split_if_code(&code);
+
+                let code = convert_instructions(state, &indent, code);
+                let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+
                 let mut true_state = state.clone();
                 let mut false_state = state.clone();
                 let true_code = convert_code(&mut true_state, &true_code, level + 1);
                 let false_code = convert_code(&mut false_state, &false_code, level + 1);
-                result += format!("{}if (\n", indent).as_str();
                 result += &code;
+                result += format!("{}if (\n", indent).as_str();
+                result += &if_code;
                 result += format!("{}) then {{\n", indent).as_str();
                 result += &true_code;
                 result += format!("{}}} else {{\n", indent).as_str();
@@ -129,41 +195,23 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
                 result += format!("{}}}\n", indent).as_str();
             },
             code::Operation::If(code, true_code) => {
-                let code = convert_code(state, &code, level + 1);
+                assert_eq!(1, code.len());
+                let (code, if_condition) = split_if_code(&code);
+                let code = convert_instructions(state, &indent, code);
+                let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+
                 let mut true_state = state.clone();
                 let true_code = convert_code(&mut true_state, &true_code, level + 1);
-                result += format!("{}if (\n", indent).as_str();
                 result += &code;
+                result += format!("{}if (\n", indent).as_str();
+                result += &if_code;
                 result += format!("{}) then {{\n", indent).as_str();
                 result += &true_code;
                 result += format!("{}}}\n", indent).as_str();
             },
             code::Operation::Execute(frag) => {
                 result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
-
-                let mut vm = execute::VM::new(&state);
-                for ins in &frag.instructions {
-                    for op in &ins.ops {
-                        if DEBUG_VM {
-                            println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
-                        }
-                        vm.execute(&op);
-                    }
-                }
-                *state = vm.state;
-
-                for rop in &vm.ops {
-                    result += format!("{}{:?}\n", indent, rop).as_str();
-                }
-                match vm.branch {
-                    execute::BranchIf::True(expr) => {
-                        result += format!("{}TRUE CONDITION {:?}\n", indent, expr).as_str();
-                    },
-                    execute::BranchIf::False(expr) => {
-                        result += format!("{}FALSE CONDITION {:?}\n", indent, expr).as_str();
-                    },
-                    execute::BranchIf::Never => { }
-                }
+                result += &convert_instructions(state, &indent, &frag.instructions);
             },
         }
     }
