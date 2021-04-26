@@ -131,13 +131,170 @@ fn convert_instructions(state: &mut execute::VMState, indent: &str, instructions
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{:?}\n", indent, rop).as_str();
+        result += format!("{}{}\n", indent, format_rop(rop)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(_) | execute::BranchIf::False(_) => { unreachable!() },
         execute::BranchIf::Never => { }
     }
     result
+}
+
+fn format_operand(op: &intermediate::Operand) -> String {
+    match op {
+        intermediate::Operand::Global(expr) => {
+            let expr = format_expression(expr);
+            format!("global({})", expr)
+        },
+        intermediate::Operand::Local(expr) => {
+            let expr = format_expression(expr);
+            format!("local({})", expr)
+        },
+        intermediate::Operand::Temp(expr) => {
+            let expr = format_expression(expr);
+            format!("temp({})", expr)
+        },
+        intermediate::Operand::Param(expr) => {
+            let expr = format_expression(expr);
+            format!("param({})", expr)
+        },
+        intermediate::Operand::Property(expr) => {
+            let expr = format_expression(expr);
+            format!("property({})", expr)
+        },
+        intermediate::Operand::Imm(val) => {
+            format!("{}", val)
+        },
+        intermediate::Operand::HelperVariable(num) => {
+            format!("v{}", num)
+        },
+        intermediate::Operand::Acc => { "acc".to_string() },
+        intermediate::Operand::Prev => { "prev".to_string() },
+        intermediate::Operand::Sp => { "sp".to_string() },
+        intermediate::Operand::Tos => { "tos".to_string() },
+        intermediate::Operand::Rest => { "rest".to_string() },
+        intermediate::Operand::OpSelf => { "self".to_string() },
+        intermediate::Operand::Tmp => { "tmp".to_string() }
+    }
+}
+
+fn format_expression(expr: &intermediate::Expression) -> String {
+    match expr {
+        intermediate::Expression::Undefined => { "undefined".to_string() },
+        intermediate::Expression::Operand(op) => { format_operand(op) },
+        intermediate::Expression::Binary(op, expr1, expr2) => {
+            let expr1 = format_expression(expr1);
+            let expr2 = format_expression(expr2);
+            let op = match op {
+                intermediate::BinaryOp::Add => { "+" },
+                intermediate::BinaryOp::Subtract => { "-" },
+                intermediate::BinaryOp::Multiply => { "*" },
+                intermediate::BinaryOp::Divide => { "/" },
+                intermediate::BinaryOp::Modulo => { "%" },
+                intermediate::BinaryOp::ShiftRight => { ">>" },
+                intermediate::BinaryOp::ShiftLeft => { "<<" },
+                intermediate::BinaryOp::ExclusiveOr => { "^" },
+                intermediate::BinaryOp::BitwiseAnd => { "&" },
+                intermediate::BinaryOp::BitwiseOr => { "|"},
+                intermediate::BinaryOp::Equals => { "==" },
+                intermediate::BinaryOp::NotEquals => { "!=" },
+                intermediate::BinaryOp::GreaterThan => { ">" },
+                intermediate::BinaryOp::GreaterOrEqual => { ">=" },
+                intermediate::BinaryOp::LessThan => { "<" },
+                intermediate::BinaryOp::LessOrEqual => { "<=" },
+                intermediate::BinaryOp::UnsignedGreaterThan => { "u>"},
+                intermediate::BinaryOp::UnsignedGreaterOrEqual => { "u>=" },
+                intermediate::BinaryOp::UnsignedLess => { "u<" },
+                intermediate::BinaryOp::UnsignedLessOrEqual => { "u<=" },
+            };
+            format!("{} {} {}", expr1, op, expr2)
+        },
+        intermediate::Expression::Unary(op, expr) => {
+            let expr = format_expression(expr);
+            let op = match op {
+                intermediate::UnaryOp::Negate => { "-" },
+                intermediate::UnaryOp::LogicNot => { "!" },
+            };
+            format!("{} {}", op, expr)
+        },
+        intermediate::Expression::Address(expr) => {
+            let expr = format_expression(expr);
+            format!("&({})", expr)
+        },
+        intermediate::Expression::Class(val) => {
+            format!("class({})", val)
+        },
+        intermediate::Expression::KCall(val, frame_size) => {
+            format!("kcall({}, {})", val, frame_size)
+        }
+    }
+}
+
+fn format_expression_vec(v: &Vec<intermediate::Expression>) -> String {
+    let mut result: String = String::new();
+    for p in v {
+        if !result.is_empty() {
+            result += ", ";
+        }
+        result += &format_expression(p);
+    }
+    result
+}
+
+fn format_rop(op: &execute::ResultOp) -> String {
+    match op {
+        execute::ResultOp::AssignProperty(dest, expr) => {
+            let dest = format_expression(dest);
+            let expr = format_expression(expr);
+            format!("property({}) = {}", dest, expr)
+        },
+        execute::ResultOp::AssignGlobal(dest, expr) => {
+            let dest = format_expression(dest);
+            let expr = format_expression(expr);
+            format!("global({}) = {}", dest, expr)
+        },
+        execute::ResultOp::AssignTemp(dest, expr) => {
+            let dest = format_expression(dest);
+            let expr = format_expression(expr);
+            format!("temp({}) = {}", dest, expr)
+        },
+        execute::ResultOp::AssignLocal(dest, expr) => {
+            let dest = format_expression(dest);
+            let expr = format_expression(expr);
+            format!("local({}) = {}", dest, expr)
+        },
+        execute::ResultOp::AssignParam(dest, expr) => {
+            let dest = format_expression(dest);
+            let expr = format_expression(expr);
+            format!("param({}) = {}", dest, expr)
+        },
+        execute::ResultOp::AssignHelperVar(n, expr) => {
+            let expr = format_expression(expr);
+            format!("v{} = {}", n, expr)
+        },
+        execute::ResultOp::CallE(script_num, disp_index, params) => {
+            let params = format_expression_vec(params);
+            format!("callE({}, {}, {})", script_num, disp_index, params)
+        },
+        execute::ResultOp::Call(offset, params) => {
+            let params = format_expression_vec(params);
+            format!("call({}, {})", offset, params)
+        },
+        execute::ResultOp::KCall(num, params) => {
+            let params = format_expression_vec(params);
+            format!("callK({}, {})", num, params)
+        },
+        execute::ResultOp::Send(dest, selector, params) => {
+            let dest = format_expression(dest);
+            let selector = format_expression(selector);
+            let params = format_expression_vec(params);
+            format!("send({}, {}, {})", dest, selector, params)
+        },
+        execute::ResultOp::Incomplete(msg) => {
+            format!("incomplete!({})", msg)
+        },
+        execute::ResultOp::Return() => { "return".to_string() },
+    }
 }
 
 fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
@@ -153,14 +310,14 @@ fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions:
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{:?}\n", indent, rop).as_str();
+        result += format!("{}{}\n", indent, format_rop(rop)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(expr) => {
-            result += format!("{}TRUE CONDITION {:?}\n", indent, expr).as_str();
+            result += format!("{}TRUE CONDITION {:?}\n", indent, format_expression(&expr)).as_str();
         },
         execute::BranchIf::False(expr) => {
-            result += format!("{}FALSE CONDITION {:?}\n", indent, expr).as_str();
+            result += format!("{}FALSE CONDITION {:?}\n", indent, format_expression(&expr)).as_str();
         },
         execute::BranchIf::Never => { unreachable!() }
     }
@@ -180,15 +337,14 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
 
                 let code = convert_instructions(state, &indent, code);
                 let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+                let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
                 let mut false_state = state.clone();
                 let true_code = convert_code(&mut true_state, &true_code, level + 1);
                 let false_code = convert_code(&mut false_state, &false_code, level + 1);
                 result += &code;
-                result += format!("{}if (\n", indent).as_str();
-                result += &if_code;
-                result += format!("{}) then {{\n", indent).as_str();
+                result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
                 result += format!("{}}} else {{\n", indent).as_str();
                 result += &false_code;
@@ -199,13 +355,12 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
                 let (code, if_condition) = split_if_code(&code);
                 let code = convert_instructions(state, &indent, code);
                 let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+                let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
                 let true_code = convert_code(&mut true_state, &true_code, level + 1);
                 result += &code;
-                result += format!("{}if (\n", indent).as_str();
-                result += &if_code;
-                result += format!("{}) then {{\n", indent).as_str();
+                result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
                 result += format!("{}}}\n", indent).as_str();
             },
