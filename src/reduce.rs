@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(graph.edge_count(), 0);
     }
 
-    fn make_code_frag(offset: usize) -> code::CodeFragment {
+    fn make_code_frag(offset: u16) -> code::CodeFragment {
         let ops: Vec<intermediate::IntermediateCode> = Vec::new();
         let instructions = vec![ intermediate::Instruction{ offset, length: 1, ops } ];
         code::CodeFragment{ instructions }
