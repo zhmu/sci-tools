@@ -297,6 +297,34 @@ fn format_rop(op: &execute::ResultOp) -> String {
     }
 }
 
+fn just_prepend_logic_not(expr: &intermediate::Expression) -> intermediate::Expression {
+    intermediate::Expression::Unary(intermediate::UnaryOp::LogicNot, Box::new(expr.clone()))
+}
+
+fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::Expression {
+    match expr {
+        intermediate::Expression::Binary(op, expr1, expr2) => {
+            let op = match op {
+                intermediate::BinaryOp::Equals => { intermediate::BinaryOp::NotEquals },
+                intermediate::BinaryOp::NotEquals => { intermediate::BinaryOp::Equals },
+                intermediate::BinaryOp::GreaterThan => { intermediate::BinaryOp::LessOrEqual},
+                intermediate::BinaryOp::GreaterOrEqual => { intermediate::BinaryOp::LessThan },
+                intermediate::BinaryOp::LessThan => { intermediate::BinaryOp::GreaterOrEqual },
+                intermediate::BinaryOp::LessOrEqual => { intermediate::BinaryOp::GreaterThan },
+                intermediate::BinaryOp::UnsignedGreaterThan => { intermediate::BinaryOp::UnsignedLessOrEqual },
+                intermediate::BinaryOp::UnsignedGreaterOrEqual => { intermediate::BinaryOp::UnsignedLess },
+                intermediate::BinaryOp::UnsignedLess => { intermediate::BinaryOp::UnsignedGreaterOrEqual },
+                intermediate::BinaryOp::UnsignedLessOrEqual => { intermediate::BinaryOp::UnsignedGreaterThan },
+                _ => {
+                    return just_prepend_logic_not(expr);
+                }
+            };
+            intermediate::Expression::Binary(op, expr1.clone(), expr2.clone())
+        },
+        _ => { just_prepend_logic_not(expr) }
+    }
+}
+
 fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
     let mut vm = execute::VM::new(&state);
     for ins in instructions {
@@ -314,10 +342,11 @@ fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions:
     }
     match vm.branch {
         execute::BranchIf::True(expr) => {
-            result += format!("{}TRUE CONDITION {:?}\n", indent, format_expression(&expr)).as_str();
+            result += format!("{}{:?}\n", indent, format_expression(&expr)).as_str();
         },
         execute::BranchIf::False(expr) => {
-            result += format!("{}FALSE CONDITION {:?}\n", indent, format_expression(&expr)).as_str();
+            let expr = invert_boolean_expression(&expr);
+            result += format!("{}{:?}\n", indent, format_expression(&expr)).as_str();
         },
         execute::BranchIf::Never => { unreachable!() }
     }
