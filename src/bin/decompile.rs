@@ -455,7 +455,7 @@ fn get_label(offset: u16, labels: &label::LabelMap) -> String {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, block: &script::ScriptBlock, labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
@@ -536,7 +536,7 @@ fn main() -> Result<(), ScriptError> {
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                write_code(&mut int_file, &mut out_file, &block, &labels, &graph)?;
+                write_code(&mut int_file, &mut out_file, &labels, &graph)?;
             },
             _ => { }
         };
