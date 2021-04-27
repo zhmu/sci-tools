@@ -118,7 +118,7 @@ fn split_if_code<'a>(ops: &'a Vec<code::Operation>) -> (&'a [intermediate::Instr
     }
 }
 
-fn convert_instructions(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+fn convert_instructions(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, indent: &str, instructions: &[intermediate::Instruction]) -> String {
     let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
@@ -131,7 +131,7 @@ fn convert_instructions(state: &mut execute::VMState, indent: &str, instructions
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{}\n", indent, format_rop(rop)).as_str();
+        result += format!("{}{}\n", indent, format_rop(rop, sel_vocab)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(_) | execute::BranchIf::False(_) => { unreachable!() },
@@ -239,7 +239,23 @@ fn format_expression_vec(v: &Vec<intermediate::Expression>) -> String {
     result
 }
 
-fn format_rop(op: &execute::ResultOp) -> String {
+fn get_expression_value(expr: &intermediate::Expression) -> Option<u16> {
+    if let intermediate::Expression::Operand(op) = expr {
+        if let intermediate::Operand::Imm(val) = op {
+            return Some(*val);
+        }
+    }
+    None
+}
+
+fn format_selector(selector: &intermediate::Expression, sel_vocab: &vocab::Vocab997) -> String {
+    if let Some(value) = get_expression_value(selector) {
+        return sel_vocab.get_selector_name(value.into()).to_string();
+    }
+    format_expression(selector)
+}
+
+fn format_rop(op: &execute::ResultOp, sel_vocab: &vocab::Vocab997) -> String {
     match op {
         execute::ResultOp::AssignProperty(dest, expr) => {
             let dest = format_expression(dest);
@@ -284,7 +300,7 @@ fn format_rop(op: &execute::ResultOp) -> String {
         },
         execute::ResultOp::Send(dest, selector, params) => {
             let dest = format_expression(dest);
-            let selector = format_expression(selector);
+            let selector = format_selector(selector, sel_vocab);
             let params = format_expression_vec(params);
             format!("send({}, {}, {})", dest, selector, params)
         },
@@ -323,7 +339,7 @@ fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::E
     }
 }
 
-fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+fn convert_conditional(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, indent: &str, instructions: &[intermediate::Instruction]) -> String {
     let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
@@ -336,7 +352,7 @@ fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions:
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{}\n", indent, format_rop(rop)).as_str();
+        result += format!("{}{}\n", indent, format_rop(rop, sel_vocab)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(expr) => {
@@ -351,7 +367,7 @@ fn convert_conditional(state: &mut execute::VMState, indent: &str, instructions:
     result
 }
 
-fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level: i32) -> String {
+fn convert_code(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
 
@@ -362,14 +378,14 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
 
-                let code = convert_instructions(state, &indent, code);
-                let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, sel_vocab, &indent, code);
+                let if_code = convert_conditional(state, sel_vocab, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
                 let mut false_state = state.clone();
-                let true_code = convert_code(&mut true_state, &true_code, level + 1);
-                let false_code = convert_code(&mut false_state, &false_code, level + 1);
+                let true_code = convert_code(&mut true_state, sel_vocab, &true_code, level + 1);
+                let false_code = convert_code(&mut false_state, sel_vocab, &false_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -380,12 +396,12 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
             code::Operation::If(code, true_code) => {
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
-                let code = convert_instructions(state, &indent, code);
-                let if_code = convert_conditional(state, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, sel_vocab, &indent, code);
+                let if_code = convert_conditional(state, sel_vocab, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
-                let true_code = convert_code(&mut true_state, &true_code, level + 1);
+                let true_code = convert_code(&mut true_state, sel_vocab, &true_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -393,7 +409,7 @@ fn convert_code(state: &mut execute::VMState, ops: &Vec<code::Operation>, level:
             },
             code::Operation::Execute(frag) => {
                 result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
-                result += &convert_instructions(state, &indent, &frag.instructions);
+                result += &convert_instructions(state, sel_vocab, &indent, &frag.instructions);
             },
         }
     }
@@ -455,7 +471,7 @@ fn get_label(offset: u16, labels: &label::LabelMap) -> String {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels: &label::LabelMap, sel_vocab: &vocab::Vocab997, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
@@ -471,7 +487,7 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels
         if graph.edges_directed(n, Outgoing).count() == 0 {
             writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
             let mut state = execute::VMState::new();
-            writeln!(out_file, "{}", convert_code(&mut state, &node.ops, 1))?;
+            writeln!(out_file, "{}", convert_code(&mut state, sel_vocab, &node.ops, 1))?;
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(int_file, "{}", msg)?;
@@ -482,6 +498,40 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels
         writeln!(out_file, "}}\n")?;
 
     }
+    Ok(())
+}
+
+fn write_object_class(out_file: &mut std::fs::File, o: &object_class::ObjectClass) -> Result<(), std::io::Error> {
+    let is_class;
+    let oc_type;
+    match o.r#type {
+        object_class::ObjectClassType::Class => { oc_type = "class"; is_class = true; },
+        object_class::ObjectClassType::Object => { oc_type = "object"; is_class = false; },
+    }
+    writeln!(out_file, "{} {} {{", oc_type, o.name)?;
+    for p in &o.properties {
+        if is_class {
+            writeln!(out_file, "    property, selector: {} selector_id: {}", p.selector, p.selector_id.unwrap())?;
+        } else {
+            writeln!(out_file, "    property, selector: {}", p.selector)?;
+        }
+    }
+
+    for f in &o.functions {
+        writeln!(out_file, "    function, selector: {} offset: {:x}", f.selector, f.offset)?;
+    }
+
+    writeln!(out_file, "}}\n")?;
+
+    Ok(())
+}
+
+fn write_said(out_file: &mut std::fs::File, s: &said::Said) -> Result<(), std::io::Error> {
+    writeln!(out_file, "said {{")?;
+    for s in &s.items {
+        writeln!(out_file, "    said_{} {}", s.offset, s.said)?;
+    }
+    writeln!(out_file, "}}\n")?;
     Ok(())
 }
 
@@ -503,10 +553,10 @@ fn main() -> Result<(), ScriptError> {
     }
 
     let vocab_997_data = std::fs::read(format!("{}/vocab.997", extract_path))?;
-    let _selector_vocab = vocab::Vocab997::new(&vocab_997_data)?;
+    let selector_vocab = vocab::Vocab997::new(&vocab_997_data)?;
 
     let vocab_000_data = std::fs::read(format!("{}/vocab.000", extract_path))?;
-    let _main_vocab = vocab::Vocab000::new(&vocab_000_data)?;
+    let main_vocab = vocab::Vocab000::new(&vocab_000_data)?;
 
     let script = script::Script::new(script_id, &script_data)?;
 
@@ -515,6 +565,26 @@ fn main() -> Result<(), ScriptError> {
     let out_path = "tmp";
     let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
     let mut out_file = File::create(format!("{}/{}.txt", out_path, script_id))?;
+
+    let mut object_classes: Vec<object_class::ObjectClass> = Vec::new();
+    let mut saids: Vec<said::Said> = Vec::new();
+    for block in &script.blocks {
+        match block.r#type {
+            script::BlockType::Object => {
+                let object_class = object_class::ObjectClass::new(&script, &block, false)?;
+                object_classes.push(object_class);
+            },
+            script::BlockType::Class => {
+                let object_class = object_class::ObjectClass::new(&script, &block, true)?;
+                object_classes.push(object_class);
+            },
+            script::BlockType::Said => {
+                let said = said::Said::new(&block, &main_vocab)?;
+                saids.push(said);
+            },
+            _ => { }
+        }
+    }
 
     for block in &script.blocks {
         if let Some(base) = script_base_offset {
@@ -536,11 +606,14 @@ fn main() -> Result<(), ScriptError> {
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                write_code(&mut int_file, &mut out_file, &labels, &graph)?;
+                write_code(&mut int_file, &mut out_file, &labels, &selector_vocab, &graph)?;
             },
             _ => { }
         };
     }
+
+    for o in &object_classes { write_object_class(&mut out_file, &o)?; }
+    for s in &saids { write_said(&mut out_file, &s)?; }
 
     Ok(())
 }

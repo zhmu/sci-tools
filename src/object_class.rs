@@ -33,7 +33,14 @@ pub struct FunctionValue {
     pub offset: u16
 }
 
+#[derive(Eq,PartialEq)]
+pub enum ObjectClassType {
+    Object,
+    Class
+}
+
 pub struct ObjectClass<'a> {
+    pub r#type: ObjectClassType,
     pub name: &'a str,
     pub properties: Vec<SelectorValue>,
     pub functions: Vec<FunctionValue>
@@ -98,6 +105,12 @@ impl<'a> ObjectClass<'a> {
                 None => { return Err(ObjectClassError::StringPointerOutOfRange) }
             }
         }
-        Ok(ObjectClass{ name, properties, functions })
+        let oc_type;
+        if is_class {
+            oc_type = ObjectClassType::Class;
+        } else {
+            oc_type = ObjectClassType::Object;
+        }
+        Ok(ObjectClass{ name, r#type: oc_type, properties, functions })
     }
 }
