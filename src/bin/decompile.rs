@@ -439,29 +439,49 @@ fn format_ops(ops: &Vec<code::Operation>, level: i32) -> String {
     result
 }
 
-fn write_code(fname: &str, block: &script::ScriptBlock, _labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
-    let mut out_file = File::create(fname).unwrap();
-    writeln!(out_file, "// Block at {:x}", block.base)?;
+fn find_offset(op: &code::Operation) -> u16 {
+    match op {
+        code::Operation::Execute(frag) => { frag.get_start_offset() },
+        code::Operation::IfElse(code, _, _) => { find_offset(code.first().unwrap()) }
+        code::Operation::If(code, _) => { find_offset(code.first().unwrap()) }
+    }
+}
 
+fn get_label(offset: u16, labels: &label::LabelMap) -> String {
+    if let Some(label) = labels.get(&offset) {
+        label.to_string()
+    } else {
+        format!("local_{:x}", offset)
+    }
+}
+
+fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, block: &script::ScriptBlock, labels: &label::LabelMap, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
 
-        if graph.edges_directed(n, Outgoing).count() != 0 {
-            println!("TODO: node {:?} does not reduce to a single node", node.as_str());
-            continue;
+        let base = find_offset(&node.ops.first().unwrap());
+        let label = get_label(base, labels);
+
+        writeln!(int_file, "// Block at {:x}", base)?;
+        writeln!(int_file, "{} {{", label)?;
+        writeln!(out_file, "// Block at {:x}", base)?;
+        writeln!(out_file, "{} {{", label)?;
+
+        if graph.edges_directed(n, Outgoing).count() == 0 {
+            writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
+            let mut state = execute::VMState::new();
+            writeln!(out_file, "{}", convert_code(&mut state, &node.ops, 1))?;
+        } else {
+            let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
+            writeln!(int_file, "{}", msg)?;
+            writeln!(out_file, "{}", msg)?;
         }
 
-        println!("intermediate code:");
-        println!("{}", format_ops(&node.ops, 0));
-        println!();
-        println!("converted code:");
-        let mut state = execute::VMState::new();
-        println!("{}", convert_code(&mut state, &node.ops, 0));
-        println!();
-    }
+        writeln!(int_file, "}}\n")?;
+        writeln!(out_file, "}}\n")?;
 
-    writeln!(out_file, "\n")?;
+    }
     Ok(())
 }
 
@@ -492,6 +512,10 @@ fn main() -> Result<(), ScriptError> {
 
     let labels = label::find_code_labels(&script);
 
+    let out_path = "tmp";
+    let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
+    let mut out_file = File::create(format!("{}/{}.txt", out_path, script_id))?;
+
     for block in &script.blocks {
         if let Some(base) = script_base_offset {
             if block.base != base { continue; }
@@ -512,8 +536,7 @@ fn main() -> Result<(), ScriptError> {
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                let out_fname = format!("tmp/{:x}.txt", block.base);
-                write_code(&out_fname, &block, &labels, &graph)?;
+                write_code(&mut int_file, &mut out_file, &block, &labels, &graph)?;
             },
             _ => { }
         };
