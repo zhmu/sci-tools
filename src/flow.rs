@@ -43,7 +43,6 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         },
         intermediate::Expression::Address(_) => { },
         intermediate::Expression::Class(_) => { },
-        intermediate::Expression::KCall(_, _) => { },
         intermediate::Expression::Undefined => { },
     }
 }

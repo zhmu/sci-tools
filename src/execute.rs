@@ -176,9 +176,9 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
         intermediate::Expression::Class(_) => { None },
         intermediate::Expression::Address(_) => { None },
-        intermediate::Expression::KCall(_, _) => { None },
         intermediate::Expression::Undefined => { None },
         intermediate::Expression::Binary(op, a, b) => {
             let a = expr_to_value(state, a);
@@ -244,6 +244,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::CallResult) => { return expr.clone(); },
         intermediate::Expression::Binary(op, a, b) => {
             let a = simplify_expr2(state, state_seen, *a);
             let b = simplify_expr2(state, state_seen, *b);
@@ -258,7 +259,6 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             return intermediate::Expression::Address(Box::new(a));
         },
         intermediate::Expression::Class(_) => { return expr.clone(); },
-        intermediate::Expression::KCall(_, _) => { return expr.clone(); },
         intermediate::Expression::Undefined => { return expr.clone(); },
     }
 }

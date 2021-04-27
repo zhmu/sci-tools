@@ -175,6 +175,7 @@ fn format_operand(op: &intermediate::Operand) -> String {
         intermediate::Operand::Rest => { "rest".to_string() },
         intermediate::Operand::OpSelf => { "self".to_string() },
         intermediate::Operand::Tmp => { "tmp".to_string() }
+        intermediate::Operand::CallResult => { "callResult".to_string() }
     }
 }
 
@@ -224,9 +225,6 @@ fn format_expression(expr: &intermediate::Expression) -> String {
         intermediate::Expression::Class(val) => {
             format!("class({})", val)
         },
-        intermediate::Expression::KCall(val, frame_size) => {
-            format!("kcall({}, {})", val, frame_size)
-        }
     }
 }
 

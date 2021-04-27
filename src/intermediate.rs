@@ -24,6 +24,7 @@ pub enum Operand {
     Rest,
     OpSelf,
     Tmp,
+    CallResult,
 }
 
 #[derive(Debug,Clone)]
@@ -64,7 +65,6 @@ pub enum Expression {
     Unary(UnaryOp, Box<Expression>),
     Address(Box<Expression>),
     Class(Register),
-    KCall(Register, FrameSize)
 }
 
 #[derive(Debug,Clone)]
@@ -295,10 +295,9 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
-            if script::does_kcall_return_void(nr) {
-                result.push(IntermediateCode::KCall(nr, frame_size));
-            } else {
-                result.push(IntermediateCode::Assign(Operand::Acc, Expression::KCall(nr, frame_size)));
+            result.push(IntermediateCode::KCall(nr, frame_size));
+            if !script::does_kcall_return_void(nr) {
+                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
             }
         },
         0x44 | 0x45 => { // callb
