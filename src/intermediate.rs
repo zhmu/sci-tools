@@ -284,7 +284,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.push(IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(2 * amount))));
         },
         0x40 | 0x41 => { // call
-            let addr: Register = ins.args[0];
+            let addr = script::relpos0_to_absolute_offset(&ins);
             let frame_size: FrameSize = ins.args[1];
             result.append(&mut adjust_sp_before_call(frame_size));
 
