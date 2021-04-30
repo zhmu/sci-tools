@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate, sci};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -255,6 +255,43 @@ fn format_selector(selector: &intermediate::Expression, sel_vocab: &vocab::Vocab
     format_expression(selector)
 }
 
+fn format_kcall(num: intermediate::Value, params: &Vec<intermediate::Expression>) -> String {
+    let kcall = sci::lookup_kcall(num);
+    match kcall {
+        Some(kcall) => {
+            let mut result: String;
+            result = format!("K{}(", kcall.name); // prefix K here
+
+            // First parameter is always the number of arguments
+            let param = format_expression(&params[0]);
+            result += format!("num_args={}", param).as_str();
+
+            let mut n: usize = 1;
+            while n <= kcall.arg.len() && n < params.len() {
+                let param = format_expression(&params[n]);
+                result += format!(", {}={}", kcall.arg[n - 1].name, param).as_str();
+                n += 1;
+            }
+            while n < params.len() {
+                let param = format_expression(&params[n]);
+                result += format!(", arg{}={}", n, param).as_str();
+                n += 1;
+            }
+            while n <= kcall.arg.len() {
+                result += format!(", {}=?", kcall.arg[n - 1].name).as_str();
+                n += 1;
+            }
+
+            result += ")";
+            result
+        },
+        None => {
+            let params = format_expression_vec(params);
+            format!("callK({}, {})", num, params)
+        }
+    }
+}
+
 fn format_rop(op: &execute::ResultOp, sel_vocab: &vocab::Vocab997) -> String {
     match op {
         execute::ResultOp::AssignProperty(dest, expr) => {
@@ -295,8 +332,7 @@ fn format_rop(op: &execute::ResultOp, sel_vocab: &vocab::Vocab997) -> String {
             format!("call({}, {})", offset, params)
         },
         execute::ResultOp::KCall(num, params) => {
-            let params = format_expression_vec(params);
-            format!("callK({}, {})", num, params)
+            format_kcall(*num, params)
         },
         execute::ResultOp::Send(dest, selector, params) => {
             let dest = format_expression(dest);
@@ -501,7 +537,15 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels
     Ok(())
 }
 
-fn write_object_class(out_file: &mut std::fs::File, o: &object_class::ObjectClass) -> Result<(), std::io::Error> {
+fn add_object_class_labels(o: &object_class::ObjectClass, sel_vocab: &vocab::Vocab997, labels: &mut label::LabelMap) {
+    for f in &o.functions {
+        let sel_name = sel_vocab.get_selector_name(f.selector.into());
+        let name = format!("{}::{}", o.name, sel_name);
+        labels.insert(f.offset, name);
+    }
+}
+
+fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997, o: &object_class::ObjectClass) -> Result<(), std::io::Error> {
     let is_class;
     let oc_type;
     match o.r#type {
@@ -518,7 +562,8 @@ fn write_object_class(out_file: &mut std::fs::File, o: &object_class::ObjectClas
     }
 
     for f in &o.functions {
-        writeln!(out_file, "    function, selector: {} offset: {:x}", f.selector, f.offset)?;
+        let sel_name = sel_vocab.get_selector_name(f.selector.into());
+        writeln!(out_file, "    function, selector: {} ({}) offset: {:x}", sel_name, f.selector, f.offset)?;
     }
 
     writeln!(out_file, "}}\n")?;
@@ -560,7 +605,7 @@ fn main() -> Result<(), ScriptError> {
 
     let script = script::Script::new(script_id, &script_data)?;
 
-    let labels = label::find_code_labels(&script);
+    let mut labels = label::find_code_labels(&script);
 
     let out_path = "tmp";
     let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
@@ -572,10 +617,12 @@ fn main() -> Result<(), ScriptError> {
         match block.r#type {
             script::BlockType::Object => {
                 let object_class = object_class::ObjectClass::new(&script, &block, false)?;
+                add_object_class_labels(&object_class, &selector_vocab, &mut labels);
                 object_classes.push(object_class);
             },
             script::BlockType::Class => {
                 let object_class = object_class::ObjectClass::new(&script, &block, true)?;
+                add_object_class_labels(&object_class, &selector_vocab, &mut labels);
                 object_classes.push(object_class);
             },
             script::BlockType::Said => {
@@ -612,7 +659,7 @@ fn main() -> Result<(), ScriptError> {
         };
     }
 
-    for o in &object_classes { write_object_class(&mut out_file, &o)?; }
+    for o in &object_classes { write_object_class(&mut out_file, &selector_vocab, &o)?; }
     for s in &saids { write_said(&mut out_file, &s)?; }
 
     Ok(())

@@ -1,4 +1,4 @@
-use crate::{disassemble, script};
+use crate::{disassemble, script, sci};
 
 use std::convert::TryInto;
 
@@ -296,7 +296,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::KCall(nr, frame_size));
-            if !script::does_kcall_return_void(nr) {
+            if !sci::does_kcall_return_void(nr) {
                 result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
             }
         },

@@ -1,4 +1,4 @@
-use crate::{intermediate, code, execute, script};
+use crate::{intermediate, code, execute, sci};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -116,7 +116,7 @@ fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
                     outputs.insert(UsedRegister::Acc);
                 },
                 intermediate::IntermediateCode::KCall(nr, _) => {
-                    if !script::does_kcall_return_void(*nr) {
+                    if !sci::does_kcall_return_void(*nr) {
                         outputs.insert(UsedRegister::Acc);
                     }
                 },
