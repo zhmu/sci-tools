@@ -130,7 +130,20 @@ impl<'a> Formatter<'a> {
                 let mut n: usize = 1;
                 while n <= kcall.arg.len() && n < params.len() {
                     let param = self.format_expression(&params[n]);
-                    result += format!(", {}={}", kcall.arg[n - 1].name, param).as_str();
+                    let karg = &kcall.arg[n - 1];
+                    result += match karg.atype {
+                        sci::ArgType::HeapPtr => {
+                            if let Some(val) = get_expression_value(&params[n]) {
+                                let val = self.get_label(val);
+                                format!(", {}={}", kcall.arg[n - 1].name, val)
+                            } else {
+                                format!(", {}={}", kcall.arg[n - 1].name, param)
+                            }
+                        },
+                        _ => {
+                            format!(", {}={}", kcall.arg[n - 1].name, param)
+                        }
+                    }.as_str();
                     n += 1;
                 }
                 while n < params.len() {

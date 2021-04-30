@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::env;
 use std::fs::File;
+use std::convert::TryInto;
 
 use petgraph::graph::NodeIndex;
 use petgraph::algo::kosaraju_scc;
@@ -357,10 +358,17 @@ fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997,
     Ok(())
 }
 
+fn add_said_labels(s: &said::Said, labels: &mut label::LabelMap) {
+    for s in &s.items {
+        let name = format!("said_{:x}", s.offset);
+        labels.insert(s.offset.try_into().unwrap(), name);
+    }
+}
+
 fn write_said(out_file: &mut std::fs::File, s: &said::Said) -> Result<(), std::io::Error> {
     writeln!(out_file, "said {{")?;
     for s in &s.items {
-        writeln!(out_file, "    said_{} {}", s.offset, s.said)?;
+        writeln!(out_file, "    said_{:x} {}", s.offset, s.said)?;
     }
     writeln!(out_file, "}}\n")?;
     Ok(())
@@ -413,6 +421,7 @@ fn main() -> Result<(), ScriptError> {
             },
             script::BlockType::Said => {
                 let said = said::Said::new(&block, &main_vocab)?;
+                add_said_labels(&said, &mut labels);
                 saids.push(said);
             },
             _ => { }
