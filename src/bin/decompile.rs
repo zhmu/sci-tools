@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate, sci};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate, print};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -118,7 +118,7 @@ fn split_if_code<'a>(ops: &'a Vec<code::Operation>) -> (&'a [intermediate::Instr
     }
 }
 
-fn convert_instructions(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction]) -> String {
     let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
@@ -131,220 +131,13 @@ fn convert_instructions(state: &mut execute::VMState, sel_vocab: &vocab::Vocab99
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{}\n", indent, format_rop(rop, sel_vocab)).as_str();
+        result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(_) | execute::BranchIf::False(_) => { unreachable!() },
         execute::BranchIf::Never => { }
     }
     result
-}
-
-fn format_operand(op: &intermediate::Operand) -> String {
-    match op {
-        intermediate::Operand::Global(expr) => {
-            let expr = format_expression(expr);
-            format!("global({})", expr)
-        },
-        intermediate::Operand::Local(expr) => {
-            let expr = format_expression(expr);
-            format!("local({})", expr)
-        },
-        intermediate::Operand::Temp(expr) => {
-            let expr = format_expression(expr);
-            format!("temp({})", expr)
-        },
-        intermediate::Operand::Param(expr) => {
-            let expr = format_expression(expr);
-            format!("param({})", expr)
-        },
-        intermediate::Operand::Property(expr) => {
-            let expr = format_expression(expr);
-            format!("property({})", expr)
-        },
-        intermediate::Operand::Imm(val) => {
-            format!("{}", val)
-        },
-        intermediate::Operand::HelperVariable(num) => {
-            format!("v{}", num)
-        },
-        intermediate::Operand::Acc => { "acc".to_string() },
-        intermediate::Operand::Prev => { "prev".to_string() },
-        intermediate::Operand::Sp => { "sp".to_string() },
-        intermediate::Operand::Tos => { "tos".to_string() },
-        intermediate::Operand::Rest => { "rest".to_string() },
-        intermediate::Operand::OpSelf => { "self".to_string() },
-        intermediate::Operand::Tmp => { "tmp".to_string() }
-        intermediate::Operand::CallResult => { "callResult".to_string() }
-    }
-}
-
-fn format_expression(expr: &intermediate::Expression) -> String {
-    match expr {
-        intermediate::Expression::Undefined => { "undefined".to_string() },
-        intermediate::Expression::Operand(op) => { format_operand(op) },
-        intermediate::Expression::Binary(op, expr1, expr2) => {
-            let expr1 = format_expression(expr1);
-            let expr2 = format_expression(expr2);
-            let op = match op {
-                intermediate::BinaryOp::Add => { "+" },
-                intermediate::BinaryOp::Subtract => { "-" },
-                intermediate::BinaryOp::Multiply => { "*" },
-                intermediate::BinaryOp::Divide => { "/" },
-                intermediate::BinaryOp::Modulo => { "%" },
-                intermediate::BinaryOp::ShiftRight => { ">>" },
-                intermediate::BinaryOp::ShiftLeft => { "<<" },
-                intermediate::BinaryOp::ExclusiveOr => { "^" },
-                intermediate::BinaryOp::BitwiseAnd => { "&" },
-                intermediate::BinaryOp::BitwiseOr => { "|"},
-                intermediate::BinaryOp::Equals => { "==" },
-                intermediate::BinaryOp::NotEquals => { "!=" },
-                intermediate::BinaryOp::GreaterThan => { ">" },
-                intermediate::BinaryOp::GreaterOrEqual => { ">=" },
-                intermediate::BinaryOp::LessThan => { "<" },
-                intermediate::BinaryOp::LessOrEqual => { "<=" },
-                intermediate::BinaryOp::UnsignedGreaterThan => { "u>"},
-                intermediate::BinaryOp::UnsignedGreaterOrEqual => { "u>=" },
-                intermediate::BinaryOp::UnsignedLess => { "u<" },
-                intermediate::BinaryOp::UnsignedLessOrEqual => { "u<=" },
-            };
-            format!("{} {} {}", expr1, op, expr2)
-        },
-        intermediate::Expression::Unary(op, expr) => {
-            let expr = format_expression(expr);
-            let op = match op {
-                intermediate::UnaryOp::Negate => { "-" },
-                intermediate::UnaryOp::LogicNot => { "!" },
-            };
-            format!("{} {}", op, expr)
-        },
-        intermediate::Expression::Address(expr) => {
-            let expr = format_expression(expr);
-            format!("&({})", expr)
-        },
-        intermediate::Expression::Class(val) => {
-            format!("class({})", val)
-        },
-    }
-}
-
-fn format_expression_vec(v: &Vec<intermediate::Expression>) -> String {
-    let mut result: String = String::new();
-    for p in v {
-        if !result.is_empty() {
-            result += ", ";
-        }
-        result += &format_expression(p);
-    }
-    result
-}
-
-fn get_expression_value(expr: &intermediate::Expression) -> Option<u16> {
-    if let intermediate::Expression::Operand(op) = expr {
-        if let intermediate::Operand::Imm(val) = op {
-            return Some(*val);
-        }
-    }
-    None
-}
-
-fn format_selector(selector: &intermediate::Expression, sel_vocab: &vocab::Vocab997) -> String {
-    if let Some(value) = get_expression_value(selector) {
-        return sel_vocab.get_selector_name(value.into()).to_string();
-    }
-    format_expression(selector)
-}
-
-fn format_kcall(num: intermediate::Value, params: &Vec<intermediate::Expression>) -> String {
-    let kcall = sci::lookup_kcall(num);
-    match kcall {
-        Some(kcall) => {
-            let mut result: String;
-            result = format!("K{}(", kcall.name); // prefix K here
-
-            // First parameter is always the number of arguments
-            let param = format_expression(&params[0]);
-            result += format!("num_args={}", param).as_str();
-
-            let mut n: usize = 1;
-            while n <= kcall.arg.len() && n < params.len() {
-                let param = format_expression(&params[n]);
-                result += format!(", {}={}", kcall.arg[n - 1].name, param).as_str();
-                n += 1;
-            }
-            while n < params.len() {
-                let param = format_expression(&params[n]);
-                result += format!(", arg{}={}", n, param).as_str();
-                n += 1;
-            }
-            while n <= kcall.arg.len() {
-                result += format!(", {}=?", kcall.arg[n - 1].name).as_str();
-                n += 1;
-            }
-
-            result += ")";
-            result
-        },
-        None => {
-            let params = format_expression_vec(params);
-            format!("callK({}, {})", num, params)
-        }
-    }
-}
-
-fn format_rop(op: &execute::ResultOp, sel_vocab: &vocab::Vocab997) -> String {
-    match op {
-        execute::ResultOp::AssignProperty(dest, expr) => {
-            let dest = format_expression(dest);
-            let expr = format_expression(expr);
-            format!("property({}) = {}", dest, expr)
-        },
-        execute::ResultOp::AssignGlobal(dest, expr) => {
-            let dest = format_expression(dest);
-            let expr = format_expression(expr);
-            format!("global({}) = {}", dest, expr)
-        },
-        execute::ResultOp::AssignTemp(dest, expr) => {
-            let dest = format_expression(dest);
-            let expr = format_expression(expr);
-            format!("temp({}) = {}", dest, expr)
-        },
-        execute::ResultOp::AssignLocal(dest, expr) => {
-            let dest = format_expression(dest);
-            let expr = format_expression(expr);
-            format!("local({}) = {}", dest, expr)
-        },
-        execute::ResultOp::AssignParam(dest, expr) => {
-            let dest = format_expression(dest);
-            let expr = format_expression(expr);
-            format!("param({}) = {}", dest, expr)
-        },
-        execute::ResultOp::AssignHelperVar(n, expr) => {
-            let expr = format_expression(expr);
-            format!("v{} = {}", n, expr)
-        },
-        execute::ResultOp::CallE(script_num, disp_index, params) => {
-            let params = format_expression_vec(params);
-            format!("callE({}, {}, {})", script_num, disp_index, params)
-        },
-        execute::ResultOp::Call(offset, params) => {
-            let params = format_expression_vec(params);
-            format!("call({}, {})", offset, params)
-        },
-        execute::ResultOp::KCall(num, params) => {
-            format_kcall(*num, params)
-        },
-        execute::ResultOp::Send(dest, selector, params) => {
-            let dest = format_expression(dest);
-            let selector = format_selector(selector, sel_vocab);
-            let params = format_expression_vec(params);
-            format!("send({}, {}, {})", dest, selector, params)
-        },
-        execute::ResultOp::Incomplete(msg) => {
-            format!("incomplete!({})", msg)
-        },
-        execute::ResultOp::Return() => { "return".to_string() },
-    }
 }
 
 fn just_prepend_logic_not(expr: &intermediate::Expression) -> intermediate::Expression {
@@ -375,7 +168,7 @@ fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::E
     }
 }
 
-fn convert_conditional(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction]) -> String {
     let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
@@ -388,22 +181,22 @@ fn convert_conditional(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997
     *state = vm.state;
     let mut result: String = String::new();
     for rop in &vm.ops {
-        result += format!("{}{}\n", indent, format_rop(rop, sel_vocab)).as_str();
+        result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
         execute::BranchIf::True(expr) => {
-            result += format!("{}{:?}\n", indent, format_expression(&expr)).as_str();
+            result += format!("{}{:?}\n", indent, formatter.format_expression(&expr)).as_str();
         },
         execute::BranchIf::False(expr) => {
             let expr = invert_boolean_expression(&expr);
-            result += format!("{}{:?}\n", indent, format_expression(&expr)).as_str();
+            result += format!("{}{:?}\n", indent, formatter.format_expression(&expr)).as_str();
         },
         execute::BranchIf::Never => { unreachable!() }
     }
     result
 }
 
-fn convert_code(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, ops: &Vec<code::Operation>, level: i32) -> String {
+fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
 
@@ -414,14 +207,14 @@ fn convert_code(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, ops: 
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
 
-                let code = convert_instructions(state, sel_vocab, &indent, code);
-                let if_code = convert_conditional(state, sel_vocab, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, formatter, &indent, code);
+                let if_code = convert_conditional(state, formatter, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
                 let mut false_state = state.clone();
-                let true_code = convert_code(&mut true_state, sel_vocab, &true_code, level + 1);
-                let false_code = convert_code(&mut false_state, sel_vocab, &false_code, level + 1);
+                let true_code = convert_code(&mut true_state, formatter, &true_code, level + 1);
+                let false_code = convert_code(&mut false_state, formatter, &false_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -432,12 +225,12 @@ fn convert_code(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, ops: 
             code::Operation::If(code, true_code) => {
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
-                let code = convert_instructions(state, sel_vocab, &indent, code);
-                let if_code = convert_conditional(state, sel_vocab, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, formatter, &indent, code);
+                let if_code = convert_conditional(state, formatter, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
-                let true_code = convert_code(&mut true_state, sel_vocab, &true_code, level + 1);
+                let true_code = convert_code(&mut true_state, formatter, &true_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -445,7 +238,7 @@ fn convert_code(state: &mut execute::VMState, sel_vocab: &vocab::Vocab997, ops: 
             },
             code::Operation::Execute(frag) => {
                 result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
-                result += &convert_instructions(state, sel_vocab, &indent, &frag.instructions);
+                result += &convert_instructions(state, formatter, &indent, &frag.instructions);
             },
         }
     }
@@ -499,21 +292,14 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
-fn get_label(offset: u16, labels: &label::LabelMap) -> String {
-    if let Some(label) = labels.get(&offset) {
-        label.to_string()
-    } else {
-        format!("local_{:x}", offset)
-    }
-}
-
 fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels: &label::LabelMap, sel_vocab: &vocab::Vocab997, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
 
+        let formatter = print::Formatter::new(&labels, &sel_vocab);
         let base = find_offset(&node.ops.first().unwrap());
-        let label = get_label(base, labels);
+        let label = formatter.get_label(base);
 
         writeln!(int_file, "// Block at {:x}", base)?;
         writeln!(int_file, "{} {{", label)?;
@@ -523,7 +309,7 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels
         if graph.edges_directed(n, Outgoing).count() == 0 {
             writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
             let mut state = execute::VMState::new();
-            writeln!(out_file, "{}", convert_code(&mut state, sel_vocab, &node.ops, 1))?;
+            writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(int_file, "{}", msg)?;
