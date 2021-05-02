@@ -293,12 +293,11 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, labels: &label::LabelMap, sel_vocab: &vocab::Vocab997, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
 
-        let formatter = print::Formatter::new(&labels, &sel_vocab);
         let base = find_offset(&node.ops.first().unwrap());
         let label = formatter.get_label(base);
 
@@ -444,6 +443,7 @@ fn main() -> Result<(), ScriptError> {
         }
     }
 
+    let formatter = print::Formatter::new(&labels, &selector_vocab, &class_definitions);
     for block in &script.blocks {
         if let Some(base) = script_base_offset {
             if block.base != base { continue; }
@@ -453,7 +453,7 @@ fn main() -> Result<(), ScriptError> {
                 let code_blocks = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&code_blocks);
 
-                flow::analyse_inout(&mut graph);
+                flow::analyse_inout(&mut graph, &class_definitions);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
@@ -464,7 +464,7 @@ fn main() -> Result<(), ScriptError> {
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                write_code(&mut int_file, &mut out_file, &labels, &selector_vocab, &graph)?;
+                write_code(&mut int_file, &mut out_file, &formatter, &graph)?;
             },
             _ => { }
         };

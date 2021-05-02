@@ -1,13 +1,14 @@
-use crate::{label, vocab, intermediate, execute, sci};
+use crate::{label, vocab, intermediate, execute, sci, class_defs};
 
 pub struct Formatter<'a> {
     labels: &'a label::LabelMap,
-    sel_vocab: &'a vocab::Vocab997
+    sel_vocab: &'a vocab::Vocab997,
+    class_definitions: &'a class_defs::ClassDefinitions
 }
 
 impl<'a> Formatter<'a> {
-    pub fn new(labels: &'a label::LabelMap, sel_vocab: &'a vocab::Vocab997) -> Self {
-        Formatter{ labels, sel_vocab }
+    pub fn new(labels: &'a label::LabelMap, sel_vocab: &'a vocab::Vocab997, class_definitions: &'a class_defs::ClassDefinitions) -> Self {
+        Formatter{ labels, sel_vocab, class_definitions }
     }
 
     fn format_operand(&self, op: &intermediate::Operand) -> String {
@@ -211,9 +212,27 @@ impl<'a> Formatter<'a> {
             },
             execute::ResultOp::Send(dest, selector, params) => {
                 let dest = self.format_expression(dest);
-                let selector = self.format_selector(selector);
-                let params = self.format_expression_vec(params);
-                format!("send({}, {}, {})", dest, selector, params)
+                if let Some(selector) = get_expression_value(selector) {
+                    let selector_name = self.sel_vocab.get_selector_name(selector.into()).to_string();
+                    if self.class_definitions.is_certainly_propery(selector) {
+                        if params.is_empty() {
+                            format!("READ {}.{}", dest, selector_name)
+                        } else {
+                            let params = self.format_expression_vec(params);
+                            format!("{}.{} = {}", dest, selector_name, params)
+                        }
+                    } else if self.class_definitions.is_certainly_func(selector) {
+                        let params = self.format_expression_vec(params);
+                        format!("{}.{}({})", dest, selector_name, params)
+                    } else {
+                        let params = self.format_expression_vec(params);
+                        format!("send({}, {}, {}) // undecided if this is a property/function", dest, selector_name, params)
+                    }
+                } else {
+                    let selector = self.format_selector(selector);
+                    let params = self.format_expression_vec(params);
+                    format!("send({}, {}, {}) // cannot determine selector", dest, selector, params)
+                }
             },
             execute::ResultOp::Incomplete(msg) => {
                 format!("incomplete!({})", msg)

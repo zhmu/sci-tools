@@ -1,9 +1,11 @@
 use crate::{object_class, script, vocab};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct ClassDefinitions {
     definitions: HashMap<u16, object_class::ObjectClass>,
+    certainly_props: HashSet<u16>,
+    certainly_funcs: HashSet<u16>,
 }
 
 impl ClassDefinitions {
@@ -34,11 +36,33 @@ impl ClassDefinitions {
                 }
             }
         }
-        ClassDefinitions{ definitions }
+
+        let mut all_props: HashSet<u16> = HashSet::new();
+        let mut all_funcs: HashSet<u16> = HashSet::new();
+        for (_, oc) in &definitions {
+            for p in &oc.properties {
+                let selector = p.selector_id.unwrap();
+                all_props.insert(selector);
+            }
+            for f in &oc.functions {
+                all_funcs.insert(f.selector);
+            }
+        }
+
+        let certainly_props: HashSet<u16> = all_props.difference(&all_funcs).map(|n| *n).collect();
+        let certainly_funcs: HashSet<u16> = all_funcs.difference(&all_props).map(|n| *n).collect();
+        ClassDefinitions{ definitions, certainly_props, certainly_funcs }
     }
 
     pub fn find_class(&self, class_id: u16) -> Option<&object_class::ObjectClass> {
         self.definitions.get(&class_id)
     }
-}
 
+    pub fn is_certainly_propery(&self, selector: u16) -> bool {
+        self.certainly_props.contains(&selector)
+    }
+
+    pub fn is_certainly_func(&self, selector: u16) -> bool {
+        self.certainly_funcs.contains(&selector)
+    }
+}

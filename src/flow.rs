@@ -1,4 +1,4 @@
-use crate::{intermediate, code, execute, sci};
+use crate::{intermediate, code, execute, sci, class_defs};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -73,7 +73,7 @@ fn process_expr_to_input_regs(state: &execute::VMState, expr: &intermediate::Exp
     }
 }
 
-fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
+fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_defs::ClassDefinitions) -> InOut {
     if DEBUG_FLOW { println!("analyse_instructions: {:x}..{:x}", frag.get_start_offset(), frag.get_end_offset()); }
 
     let mut inputs: HashSet<UsedRegister> = HashSet::new();
@@ -132,12 +132,17 @@ fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
                         let num_values = &values[n + 1];
                         if let Some(num_values) = execute::expr_to_value(&vm.state, &num_values) {
                             let num_values = num_values as usize;
-                            if DEBUG_FLOW {
-                                println!("SEND: selector {:?} num_values {:?} values {:?}", selector, num_values,
-                                    &values[n + 2..n + 2 + num_values]);
+                            if let Some(selector) = execute::expr_to_value(&vm.state, &selector) {
+                                if num_values == 0 && class_definitions.is_certainly_propery(selector) {
+                                    outputs.insert(UsedRegister::Acc);
+                                } else if class_definitions.is_certainly_func(selector) {
+                                    outputs.insert(UsedRegister::Acc);
+                                }
+                            } else {
+                                println!("couldn't resolve selector values in send call {:?}", selector);
                             }
                             n += 2 + num_values;
-                            println!("TODO: flow/send: properly register inputs");
+                            println!("TODO: flow/send: stack??");
                         } else {
                             println!("couldn't resolve num values in send call {:?} - not analysing further", num_values);
                             break;
@@ -157,13 +162,13 @@ fn analyse_instructions(frag: &code::CodeFragment) -> InOut {
     InOut{ inputs, outputs }
 }
 
-fn analyse_graph_inout_node(graph: &code::CodeGraph, n: NodeIndex) -> InOut {
+fn analyse_graph_inout_node(class_definitions: &class_defs::ClassDefinitions, graph: &code::CodeGraph, n: NodeIndex) -> InOut {
     let node = &graph[n];
 
     assert_eq!(1, node.ops.len());
     let op = node.ops.first().unwrap();
     if let code::Operation::Execute(frag) = op {
-        return analyse_instructions(&frag);
+        return analyse_instructions(&frag, class_definitions);
     } else {
         unreachable!();
     }
@@ -225,12 +230,12 @@ fn map_usedregister_to_op(reg: UsedRegister) -> intermediate::Operand {
     }
 }
 
-pub fn analyse_inout(graph: &mut code::CodeGraph) {
+pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions) {
     let mut result: HashMap<NodeIndex, InOut> = HashMap::new();
 
     for n in graph.node_indices() {
         if DEBUG_FLOW { println!("analyzing node {:?}", n); }
-        let in_out = analyse_graph_inout_node(graph, n);
+        let in_out = analyse_graph_inout_node(class_definitions, graph, n);
         if DEBUG_FLOW { println!("node {:?}: in_used {:?} out_used {:?}", n, in_out.inputs, in_out.outputs); }
         result.insert(n, in_out);
     }
