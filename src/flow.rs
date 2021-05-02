@@ -121,6 +121,7 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                     }
                 },
                 intermediate::IntermediateCode::Return() => { },
+                intermediate::IntermediateCode::Rest(_) => { },
                 intermediate::IntermediateCode::Send(_, frame_size) => {
                     let values = vm.get_stack_values(*frame_size);
                     let n_args = (*frame_size as usize) / 2;

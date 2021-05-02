@@ -78,6 +78,7 @@ pub enum IntermediateCode {
     CallE(ScriptID, Register, FrameSize),
     Return(),
     Send(Expression, FrameSize),
+    Rest(Register),
 }
 
 #[derive(Debug,Clone)]
@@ -346,8 +347,8 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.push(IntermediateCode::Send(expr_imm(class), frame_size));
         },
         0x58 | 0x59 => { // &rest
-            let _param_index: Register = ins.args[0];
-            todo!("&rest");
+            let param_index: Register = ins.args[0];
+            result.push(IntermediateCode::Rest(param_index));
         },
         0x5a | 0x5b => { // lea
             let vt: Register = ins.args[0];

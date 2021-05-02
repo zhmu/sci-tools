@@ -3,7 +3,7 @@ use crate::{intermediate};
 use std::fmt;
 use std::collections::HashSet;
 
-const STACK_SIZE: intermediate::Value = 128;
+const STACK_SIZE: intermediate::Value = 1024;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
@@ -177,6 +177,7 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { None },
         intermediate::Expression::Class(_) => { None },
         intermediate::Expression::Address(_) => { None },
         intermediate::Expression::Undefined => { None },
@@ -416,7 +417,7 @@ impl VM {
                 }
             },
             intermediate::IntermediateCode::BranchAlways(_) => {
-                println!("BranchAlways(): don't think we need to do anything here?");
+                //println!("BranchAlways(): don't think we need to do anything here?");
             },
             intermediate::IntermediateCode::Return() => {
                 self.ops.push(ResultOp::Return());
@@ -471,6 +472,10 @@ impl VM {
                     }
                 }
             },
+            intermediate::IntermediateCode::Rest(num_args) => {
+                let msg = format!("&rest {} called", num_args);
+                self.ops.push(ResultOp::Incomplete(msg));
+            }
         }
     }
 }
