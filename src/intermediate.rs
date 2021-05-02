@@ -17,6 +17,7 @@ pub enum Operand {
     Property(Box<Expression>),
     Imm(Register),
     HelperVariable(usize),
+    SelectorValue(Box<Expression>, Register),
     Acc,
     Prev,
     Sp,

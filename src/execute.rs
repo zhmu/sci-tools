@@ -1,4 +1,4 @@
-use crate::{intermediate};
+use crate::{intermediate, class_defs};
 
 use std::fmt;
 use std::collections::HashSet;
@@ -111,10 +111,11 @@ pub enum BranchIf {
     False(intermediate::Expression),
 }
 
-pub struct VM {
+pub struct VM<'a> {
     pub ops: Vec<ResultOp>,
     pub branch: BranchIf,
-    pub state: VMState
+    pub state: VMState,
+    class_definitions: &'a class_defs::ClassDefinitions
 }
 
 #[derive(PartialEq,Eq,Hash)]
@@ -178,6 +179,7 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::SelectorValue(_, _)) => { None },
         intermediate::Expression::Class(_) => { None },
         intermediate::Expression::Address(_) => { None },
         intermediate::Expression::Undefined => { None },
@@ -246,6 +248,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::SelectorValue(_, _)) => { return expr.clone(); },
         intermediate::Expression::Binary(op, a, b) => {
             let a = simplify_expr2(state, state_seen, *a);
             let b = simplify_expr2(state, state_seen, *b);
@@ -280,9 +283,9 @@ fn gather_params(state: &mut VMState, sp: intermediate::Value, frame_size: inter
     params
 }
 
-impl VM {
-    pub fn new(state: &VMState) -> Self {
-        VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone() }
+impl<'a> VM<'a> {
+    pub fn new(state: &VMState, class_definitions: &'a class_defs::ClassDefinitions) -> Self {
+        VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone(), class_definitions }
     }
 
     pub fn get_stack_values(&self, frame_size: intermediate::Register) -> Vec<intermediate::Expression> {
@@ -463,8 +466,24 @@ impl VM {
                             let expr = simplify_expr(&mut self.state, &values[n + m]);
                             args.push(expr);
                         }
-                        self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
-                        n += num_values;
+
+                        if let Some(selector_value) = expr_to_value(&self.state, &selector) {
+                            if num_values == 0 && self.class_definitions.is_certainly_propery(selector_value) {
+                                self.state.acc = intermediate::Expression::Operand(
+                                    intermediate::Operand::SelectorValue(Box::new(expr.clone()), selector_value));
+                            } else {
+                                if self.class_definitions.is_certainly_func(selector_value) {
+                                    self.state.acc = intermediate::Expression::Operand(intermediate::Operand::CallResult);
+                                }
+                                self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
+                            }
+                            n += num_values;
+                        } else {
+                            let msg = format!("send: unable to convert selector value {:?} to number", selector);
+                            self.ops.push(ResultOp::Incomplete(msg));
+                            self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
+                            n += num_values;
+                        }
                     } else {
                         let msg = format!("could not convert num_values {:?} to number", values[n]);
                         self.ops.push(ResultOp::Incomplete(msg));

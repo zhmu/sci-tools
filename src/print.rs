@@ -39,6 +39,11 @@ impl<'a> Formatter<'a> {
             intermediate::Operand::HelperVariable(num) => {
                 format!("v{}", num)
             },
+            intermediate::Operand::SelectorValue(expr, selector_nr) => {
+                let expr = self.format_expression(expr);
+                let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
+                format!("{}.{}", expr, selector)
+            },
             intermediate::Operand::Acc => { "acc".to_string() },
             intermediate::Operand::Prev => { "prev".to_string() },
             intermediate::Operand::Sp => { "sp".to_string() },

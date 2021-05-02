@@ -119,8 +119,8 @@ fn split_if_code<'a>(ops: &'a Vec<code::Operation>) -> (&'a [intermediate::Instr
     }
 }
 
-fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction]) -> String {
-    let mut vm = execute::VM::new(&state);
+fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+    let mut vm = execute::VM::new(&state, class_definitions);
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
@@ -169,8 +169,8 @@ fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::E
     }
 }
 
-fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction]) -> String {
-    let mut vm = execute::VM::new(&state);
+fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+    let mut vm = execute::VM::new(&state, class_definitions);
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
@@ -197,7 +197,7 @@ fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatte
     result
 }
 
-fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops: &Vec<code::Operation>, level: i32) -> String {
+fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
 
@@ -208,14 +208,14 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops:
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
 
-                let code = convert_instructions(state, formatter, &indent, code);
-                let if_code = convert_conditional(state, formatter, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
+                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
                 let mut false_state = state.clone();
-                let true_code = convert_code(&mut true_state, formatter, &true_code, level + 1);
-                let false_code = convert_code(&mut false_state, formatter, &false_code, level + 1);
+                let true_code = convert_code(&mut true_state, formatter, class_definitions, &true_code, level + 1);
+                let false_code = convert_code(&mut false_state, formatter, class_definitions, &false_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -226,12 +226,12 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops:
             code::Operation::If(code, true_code) => {
                 assert_eq!(1, code.len());
                 let (code, if_condition) = split_if_code(&code);
-                let code = convert_instructions(state, formatter, &indent, code);
-                let if_code = convert_conditional(state, formatter, format!("{}    ", indent).as_str(), if_condition);
+                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
+                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition);
                 let if_code = if_code.trim();
 
                 let mut true_state = state.clone();
-                let true_code = convert_code(&mut true_state, formatter, &true_code, level + 1);
+                let true_code = convert_code(&mut true_state, formatter, class_definitions, &true_code, level + 1);
                 result += &code;
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &true_code;
@@ -239,7 +239,7 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops:
             },
             code::Operation::Execute(frag) => {
                 result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
-                result += &convert_instructions(state, formatter, &indent, &frag.instructions);
+                result += &convert_instructions(state, formatter, class_definitions, &indent, &frag.instructions);
             },
         }
     }
@@ -293,7 +293,7 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
@@ -309,7 +309,7 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, format
         if graph.edges_directed(n, Outgoing).count() == 0 {
             writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
             let mut state = execute::VMState::new();
-            writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
+            writeln!(out_file, "{}", convert_code(&mut state, &formatter, class_definitions, &node.ops, 1))?;
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(int_file, "{}", msg)?;
@@ -354,7 +354,11 @@ fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997,
         if is_class {
             writeln!(out_file, "    property, selector: {} selector_id: {}", p.selector, p.selector_id.unwrap())?;
         } else {
-            writeln!(out_file, "    property({}) {} = {}", n, property_vec[n].0, p.selector)?;
+            if n < property_vec.len() {
+                writeln!(out_file, "    property({}) {} = {}", n, property_vec[n].0, p.selector)?;
+            } else {
+                writeln!(out_file, "    property({}) ??? OUT OF RANGE {}", n, p.selector)?;
+            }
         }
     }
 
@@ -464,7 +468,7 @@ fn main() -> Result<(), ScriptError> {
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                write_code(&mut int_file, &mut out_file, &formatter, &graph)?;
+                write_code(&mut int_file, &mut out_file, &formatter, &class_definitions, &graph)?;
             },
             _ => { }
         };
