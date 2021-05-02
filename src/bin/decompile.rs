@@ -339,7 +339,7 @@ fn add_object_class_labels(o: &object_class::ObjectClass, sel_vocab: &vocab::Voc
     }
 }
 
-fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997, class_definitions: &mut class_defs::ClassDefinitions, o: &object_class::ObjectClass) -> Result<(), ScriptError> {
+fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997, class_definitions: &class_defs::ClassDefinitions, o: &object_class::ObjectClass) -> Result<(), ScriptError> {
     let is_class;
     let oc_type;
     match o.r#type {
@@ -347,7 +347,7 @@ fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997,
         object_class::ObjectClassType::Object => { oc_type = "object"; is_class = false; },
     }
     let species = o.get_species();
-    let species_class = class_definitions.find_class(species)?;
+    let species_class = class_definitions.find_class(species).unwrap();
 
     let inherits_from: String;
     if species != 0 {
@@ -415,7 +415,7 @@ fn main() -> Result<(), ScriptError> {
     let vocab_996_data = std::fs::read(format!("{}/vocab.996", extract_path))?;
     let class_vocab = vocab::Vocab996::new(&vocab_996_data)?;
 
-    let mut class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
+    let class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
 
     let vocab_000_data = std::fs::read(format!("{}/vocab.000", extract_path))?;
     let main_vocab = vocab::Vocab000::new(&vocab_000_data)?;
@@ -477,7 +477,7 @@ fn main() -> Result<(), ScriptError> {
         };
     }
 
-    for o in &object_classes { write_object_class(&mut out_file, &selector_vocab, &mut class_definitions, &o)?; }
+    for o in &object_classes { write_object_class(&mut out_file, &selector_vocab, &class_definitions, &o)?; }
     for s in &saids { write_said(&mut out_file, &s)?; }
 
     Ok(())

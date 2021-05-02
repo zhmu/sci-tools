@@ -21,39 +21,43 @@ impl From<object_class::ObjectClassError> for ClassError {
     }
 }
 
-pub struct ClassDefinitions<'a> {
-    path: String,
-    class_vocab: &'a vocab::Vocab996,
+pub struct ClassDefinitions {
     definitions: HashMap<u16, object_class::ObjectClass>,
 }
 
-impl<'a> ClassDefinitions<'a> {
-    pub fn new(path: String, class_vocab: &'a vocab::Vocab996) -> Self {
-        ClassDefinitions{ path, definitions: HashMap::new(), class_vocab }
-    }
-
-    pub fn find_class(&mut self, class_id: u16) -> Result<&object_class::ObjectClass, ClassError> {
-        if !self.definitions.contains_key(&class_id) {
-            let script_id = self.class_vocab.get_script(class_id);
-            if script_id.is_none() { return Err(ClassError::NoSuchClass(class_id)); }
+impl ClassDefinitions {
+    pub fn new(path: String, class_vocab: &vocab::Vocab996) -> Self {
+        let mut definitions: HashMap<u16, object_class::ObjectClass> = HashMap::new();
+        for class_id in 0..class_vocab.get_number_of_classes() {
+            let script_id = class_vocab.get_script(class_id as u16);
+            if script_id.is_none() { continue; }
             let script_id = script_id.unwrap();
 
-            let script_data = std::fs::read(format!("{}/script.{:03}", self.path, script_id))?;
-            let script = script::Script::new(script_id as i16, &script_data)?;
+            let script_data = std::fs::read(format!("{}/script.{:03}", path, script_id));
+            if script_data.is_err() { continue; }
+            let script_data = script_data.unwrap();
+            let script = script::Script::new(script_id as i16, &script_data);
+            if script.is_err() { continue; }
+            let script = script.unwrap();
 
             for block in &script.blocks {
                 match block.r#type {
                     script::BlockType::Class => {
-                        let object_class = object_class::ObjectClass::new(&script, &block, true)?;
-                        let species = object_class.get_species();
-                        self.definitions.insert(species, object_class);
+                        let object_class = object_class::ObjectClass::new(&script, &block, true);
+                        if let Ok(object_class) = object_class {
+                            let species = object_class.get_species();
+                            definitions.insert(species, object_class);
+                        }
                     },
                     _ => { }
                 }
             }
-            assert!(self.definitions.contains_key(&class_id));
         }
-        Ok(self.definitions.get(&class_id).unwrap())
+        ClassDefinitions{ definitions }
+    }
+
+    pub fn find_class(&self, class_id: u16) -> Option<&object_class::ObjectClass> {
+        self.definitions.get(&class_id)
     }
 }
 

@@ -131,4 +131,8 @@ impl Vocab996 {
         }
         Some(self.classes[class_id])
     }
+
+    pub fn get_number_of_classes(&self) -> usize {
+        self.classes.len()
+    }
 }

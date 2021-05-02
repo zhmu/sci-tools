@@ -103,12 +103,12 @@ fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, label
     }
 }
 
-fn decode_object_class(script: &script::Script, block: &script::ScriptBlock, selector_vocab: &vocab::Vocab997, class_definitions: &mut class_defs::ClassDefinitions, is_class: bool) -> Result<(), ScriptError> {
+fn decode_object_class(script: &script::Script, block: &script::ScriptBlock, selector_vocab: &vocab::Vocab997, class_definitions: &class_defs::ClassDefinitions, is_class: bool) -> Result<(), ScriptError> {
     let object_class = object_class::ObjectClass::new(&script, &block, is_class)?;
 
     let object_or_class = if is_class { "class" } else { "object" };
     let species = object_class.get_species();
-    let species_class = class_definitions.find_class(species)?;
+    let species_class = class_definitions.find_class(species).unwrap();
 
     let inherits_from: String;
     if species != 0 {
@@ -228,7 +228,7 @@ fn main() -> Result<(), ScriptError> {
 
     let vocab_996_data = std::fs::read(format!("{}/vocab.996", extract_path))?;
     let class_vocab = vocab::Vocab996::new(&vocab_996_data)?;
-    let mut class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
+    let class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
 
     let script = script::Script::new(script_id, &script_data)?;
 
@@ -237,8 +237,8 @@ fn main() -> Result<(), ScriptError> {
         println!("block @ {:x} type {:?} size {}", block.base, block.r#type, block.data.len());
         match block.r#type {
             script::BlockType::Code => { disassemble_block(&script, &block, &labels); }
-            script::BlockType::Object => { decode_object_class(&script, &block, &selector_vocab, &mut class_definitions, false)?; }
-            script::BlockType::Class => { decode_object_class(&script, &block, &selector_vocab, &mut class_definitions, true)?; }
+            script::BlockType::Object => { decode_object_class(&script, &block, &selector_vocab, &class_definitions, false)?; }
+            script::BlockType::Class => { decode_object_class(&script, &block, &selector_vocab, &class_definitions, true)?; }
             script::BlockType::Said => { decode_said(&block, &main_vocab)?; }
             _ => { }
         };
