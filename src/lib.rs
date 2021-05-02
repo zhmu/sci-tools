@@ -17,3 +17,4 @@ pub mod label;
 pub mod flow;
 pub mod sci;
 pub mod print;
+pub mod class_defs;

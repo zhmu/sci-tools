@@ -102,3 +102,33 @@ impl Vocab000 {
     }
 
 }
+
+pub struct Vocab996 {
+    classes: Vec<u16>
+}
+
+impl Vocab996 {
+    pub fn new(input: &[u8]) -> Result<Vocab996, VocabError> {
+        let mut classes: Vec<u16> = Vec::new();
+
+        let mut rdr = Cursor::new(&input);
+        loop {
+            let must_be_zero = rdr.read_u16::<LittleEndian>();
+            if must_be_zero .is_err() { break; }
+            assert_eq!(0, must_be_zero.unwrap());
+            let script = rdr.read_u16::<LittleEndian>()?;
+
+            classes.push(script);
+        }
+
+        Ok(Vocab996{ classes })
+    }
+
+    pub fn get_script(&self, class_id: u16) -> Option<u16> {
+        let class_id = class_id as usize;
+        if class_id >= self.classes.len() {
+            return None;
+        }
+        Some(self.classes[class_id])
+    }
+}

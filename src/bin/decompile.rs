@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate, print};
+use scitools::{script, vocab, said, object_class, graph_lib, reduce, code, execute, split, label, flow, intermediate, print, class_defs};
 use std::collections::HashMap;
 use std::io::Write;
 use std::env;
@@ -19,6 +19,7 @@ enum ScriptError {
     VocabError(vocab::VocabError),
     SaidError(said::SaidError),
     ObjectClassError(object_class::ObjectClassError),
+    ClassError(class_defs::ClassError),
 }
 
 impl From<std::io::Error> for ScriptError {
@@ -42,6 +43,12 @@ impl From<said::SaidError> for ScriptError {
 impl From<object_class::ObjectClassError> for ScriptError {
     fn from(error: object_class::ObjectClassError) -> Self {
        ScriptError::ObjectClassError(error)
+    }
+}
+
+impl From<class_defs::ClassError> for ScriptError {
+    fn from(error: class_defs::ClassError) -> Self {
+       ScriptError::ClassError(error)
     }
 }
 
@@ -332,19 +339,30 @@ fn add_object_class_labels(o: &object_class::ObjectClass, sel_vocab: &vocab::Voc
     }
 }
 
-fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997, o: &object_class::ObjectClass) -> Result<(), std::io::Error> {
+fn write_object_class(out_file: &mut std::fs::File, sel_vocab: &vocab::Vocab997, class_definitions: &mut class_defs::ClassDefinitions, o: &object_class::ObjectClass) -> Result<(), ScriptError> {
     let is_class;
     let oc_type;
     match o.r#type {
         object_class::ObjectClassType::Class => { oc_type = "class"; is_class = true; },
         object_class::ObjectClassType::Object => { oc_type = "object"; is_class = false; },
     }
-    writeln!(out_file, "{} {} {{", oc_type, o.name)?;
-    for p in &o.properties {
+    let species = o.get_species();
+    let species_class = class_definitions.find_class(species)?;
+
+    let inherits_from: String;
+    if species != 0 {
+        inherits_from = format!(" : {}", species_class.name);
+    } else {
+         inherits_from = "".to_string();
+    }
+
+    writeln!(out_file, "{} {}{} {{", oc_type, o.name, inherits_from)?;
+    let property_vec = species_class.get_class_properties(sel_vocab);
+    for (n, p) in o.properties.iter().enumerate() {
         if is_class {
             writeln!(out_file, "    property, selector: {} selector_id: {}", p.selector, p.selector_id.unwrap())?;
         } else {
-            writeln!(out_file, "    property, selector: {}", p.selector)?;
+            writeln!(out_file, "    property({}) {} = {}", n, property_vec[n].0, p.selector)?;
         }
     }
 
@@ -393,6 +411,11 @@ fn main() -> Result<(), ScriptError> {
 
     let vocab_997_data = std::fs::read(format!("{}/vocab.997", extract_path))?;
     let selector_vocab = vocab::Vocab997::new(&vocab_997_data)?;
+
+    let vocab_996_data = std::fs::read(format!("{}/vocab.996", extract_path))?;
+    let class_vocab = vocab::Vocab996::new(&vocab_996_data)?;
+
+    let mut class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
 
     let vocab_000_data = std::fs::read(format!("{}/vocab.000", extract_path))?;
     let main_vocab = vocab::Vocab000::new(&vocab_000_data)?;
@@ -454,7 +477,7 @@ fn main() -> Result<(), ScriptError> {
         };
     }
 
-    for o in &object_classes { write_object_class(&mut out_file, &selector_vocab, &o)?; }
+    for o in &object_classes { write_object_class(&mut out_file, &selector_vocab, &mut class_definitions, &o)?; }
     for s in &saids { write_said(&mut out_file, &s)?; }
 
     Ok(())

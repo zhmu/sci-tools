@@ -1,11 +1,10 @@
-use crate::script;
+use crate::{script, vocab};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
-use std::str;
 
-const _SELECTOR_INDEX_SPECIES: usize = 0;
-const _SELECTOR_INDEX_SUPERCLASS: usize = 1;
+const SELECTOR_INDEX_SPECIES: usize = 0;
+const SELECTOR_INDEX_SUPERCLASS: usize = 1;
 const _SELECTOR_INDEX_INFO: usize = 2;
 const SELECTOR_INDEX_NAME: usize = 3;
 
@@ -23,31 +22,34 @@ impl From<std::io::Error> for ObjectClassError {
     }
 }
 
+#[derive(Debug,Clone)]
 pub struct SelectorValue {
     pub selector: u16,
     pub selector_id: Option<u16> // only classes have these
 }
 
+#[derive(Debug,Clone)]
 pub struct FunctionValue {
     pub selector: u16,
     pub offset: u16
 }
 
-#[derive(Eq,PartialEq)]
+#[derive(Eq,PartialEq,Debug,Clone)]
 pub enum ObjectClassType {
     Object,
     Class
 }
 
-pub struct ObjectClass<'a> {
+#[derive(Debug,Clone)]
+pub struct ObjectClass {
     pub r#type: ObjectClassType,
-    pub name: &'a str,
+    pub name: String,
     pub properties: Vec<SelectorValue>,
     pub functions: Vec<FunctionValue>
 }
 
-impl<'a> ObjectClass<'a> {
-    pub fn new(script: &'a script::Script, block: &'a script::ScriptBlock, is_class: bool) -> Result<ObjectClass<'a>, ObjectClassError> {
+impl ObjectClass {
+    pub fn new(script: &script::Script, block: &script::ScriptBlock, is_class: bool) -> Result<ObjectClass, ObjectClassError> {
         let mut rdr = Cursor::new(&block.data);
         let block_magic = rdr.read_u16::<LittleEndian>()?;
         if block_magic != 0x1234 {
@@ -111,6 +113,24 @@ impl<'a> ObjectClass<'a> {
         } else {
             oc_type = ObjectClassType::Object;
         }
-        Ok(ObjectClass{ name, r#type: oc_type, properties, functions })
+        Ok(ObjectClass{ name: name.to_string(), r#type: oc_type, properties, functions })
+    }
+
+    pub fn get_species(&self) -> u16 {
+        self.properties[SELECTOR_INDEX_SPECIES].selector
+    }
+
+    pub fn get_superclass(&self) -> u16 {
+        self.properties[SELECTOR_INDEX_SUPERCLASS].selector
+    }
+
+    pub fn get_class_properties(&self, selector_vocab: &vocab::Vocab997) -> Vec<(String, u16)> {
+        let mut result: Vec<(String, u16)> = Vec::new();
+        for p in &self.properties {
+            let selector = p.selector_id.unwrap();
+            let selector = selector_vocab.get_selector_name(selector as usize);
+            result.push(( selector.to_string(), p.selector ));
+        }
+        result
     }
 }

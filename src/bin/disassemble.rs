@@ -1,6 +1,6 @@
 extern crate scitools;
 
-use scitools::{opcode, disassemble, script, vocab, said, object_class};
+use scitools::{opcode, disassemble, script, vocab, said, object_class, class_defs};
 use std::collections::HashMap;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
@@ -15,6 +15,7 @@ enum ScriptError {
     VocabError(vocab::VocabError),
     SaidError(said::SaidError),
     ObjectClassError(object_class::ObjectClassError),
+    ClassError(class_defs::ClassError),
 }
 
 impl From<std::io::Error> for ScriptError {
@@ -38,6 +39,12 @@ impl From<said::SaidError> for ScriptError {
 impl From<object_class::ObjectClassError> for ScriptError {
     fn from(error: object_class::ObjectClassError) -> Self {
        ScriptError::ObjectClassError(error)
+    }
+}
+
+impl From<class_defs::ClassError> for ScriptError {
+    fn from(error: class_defs::ClassError) -> Self {
+       ScriptError::ClassError(error)
     }
 }
 
@@ -96,18 +103,32 @@ fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, label
     }
 }
 
-fn decode_object_class(script: &script::Script, block: &script::ScriptBlock, selector_vocab: &vocab::Vocab997, is_class: bool) -> Result<(), ScriptError> {
+fn decode_object_class(script: &script::Script, block: &script::ScriptBlock, selector_vocab: &vocab::Vocab997, class_definitions: &mut class_defs::ClassDefinitions, is_class: bool) -> Result<(), ScriptError> {
     let object_class = object_class::ObjectClass::new(&script, &block, is_class)?;
 
     let object_or_class = if is_class { "class" } else { "object" };
-    println!("  {}: '{}'", object_or_class, object_class.name);
+    let species = object_class.get_species();
+    let species_class = class_definitions.find_class(species)?;
+
+    let inherits_from: String;
+    if species != 0 {
+        inherits_from = format!(" : {}", species_class.name);
+    } else {
+         inherits_from = "".to_string();
+    }
+
+    println!("  {} {}{} {{", object_or_class, object_class.name, inherits_from);
+
+    let property_vec = species_class.get_class_properties(selector_vocab);
 
     for (n, prop) in object_class.properties.iter().enumerate() {
-        println!("    property {}. selector {:x} selector_id {:x}", n, prop.selector, prop.selector_id.unwrap_or(0));
+        println!("    property {}. {} = {}", n, property_vec[n].0, prop.selector);
     }
+
     for (n, func) in object_class.functions.iter().enumerate() {
         println!("    function {}. selector '{}' ({:x}) offset {:x}", n, selector_vocab.get_selector_name(func.selector as usize), func.selector, func.offset);
     }
+    println!("  }}");
     Ok(())
 }
 
@@ -205,6 +226,10 @@ fn main() -> Result<(), ScriptError> {
     let vocab_000_data = std::fs::read(format!("{}/vocab.000", extract_path))?;
     let main_vocab = vocab::Vocab000::new(&vocab_000_data)?;
 
+    let vocab_996_data = std::fs::read(format!("{}/vocab.996", extract_path))?;
+    let class_vocab = vocab::Vocab996::new(&vocab_996_data)?;
+    let mut class_definitions = class_defs::ClassDefinitions::new(extract_path.to_string(), &class_vocab);
+
     let script = script::Script::new(script_id, &script_data)?;
 
     let labels = find_labels(&script, &selector_vocab, &main_vocab)?;
@@ -212,8 +237,8 @@ fn main() -> Result<(), ScriptError> {
         println!("block @ {:x} type {:?} size {}", block.base, block.r#type, block.data.len());
         match block.r#type {
             script::BlockType::Code => { disassemble_block(&script, &block, &labels); }
-            script::BlockType::Object => { decode_object_class(&script, &block, &selector_vocab, false)?; }
-            script::BlockType::Class => { decode_object_class(&script, &block, &selector_vocab, true)?; }
+            script::BlockType::Object => { decode_object_class(&script, &block, &selector_vocab, &mut class_definitions, false)?; }
+            script::BlockType::Class => { decode_object_class(&script, &block, &selector_vocab, &mut class_definitions, true)?; }
             script::BlockType::Said => { decode_said(&block, &main_vocab)?; }
             _ => { }
         };
