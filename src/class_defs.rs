@@ -2,25 +2,6 @@ use crate::{object_class, script, vocab};
 
 use std::collections::HashMap;
 
-#[derive(Debug)]
-pub enum ClassError {
-    IoError(std::io::Error),
-    ObjectClassError(object_class::ObjectClassError),
-    NoSuchClass(u16),
-}
-
-impl From<std::io::Error> for ClassError {
-    fn from(error: std::io::Error) -> Self {
-       ClassError::IoError(error)
-    }
-}
-
-impl From<object_class::ObjectClassError> for ClassError {
-    fn from(error: object_class::ObjectClassError) -> Self {
-       ClassError::ObjectClassError(error)
-    }
-}
-
 pub struct ClassDefinitions {
     definitions: HashMap<u16, object_class::ObjectClass>,
 }

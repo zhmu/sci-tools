@@ -19,7 +19,6 @@ enum ScriptError {
     VocabError(vocab::VocabError),
     SaidError(said::SaidError),
     ObjectClassError(object_class::ObjectClassError),
-    ClassError(class_defs::ClassError),
 }
 
 impl From<std::io::Error> for ScriptError {
@@ -43,12 +42,6 @@ impl From<said::SaidError> for ScriptError {
 impl From<object_class::ObjectClassError> for ScriptError {
     fn from(error: object_class::ObjectClassError) -> Self {
        ScriptError::ObjectClassError(error)
-    }
-}
-
-impl From<class_defs::ClassError> for ScriptError {
-    fn from(error: class_defs::ClassError) -> Self {
-       ScriptError::ClassError(error)
     }
 }
 
