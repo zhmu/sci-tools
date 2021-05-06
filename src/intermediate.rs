@@ -291,6 +291,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::Call(addr, frame_size));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
         },
         0x42 | 0x43 => { // kcall
             let nr = ins.args[0];
@@ -317,6 +318,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::CallE(script, disp_index, frame_size));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
         },
         0x48 | 0x49 => { // ret
             result.push(IntermediateCode::Return());
