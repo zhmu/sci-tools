@@ -46,10 +46,8 @@ pub struct CodeEdge {
 pub enum Operation {
     // Code
     Execute(CodeFragment),
-    // Code, TrueBranch, FalseBranch
-    IfElse(Vec<Operation>, Vec<Operation>, Vec<Operation>),
-    // Code, TrueBranch
-    If(Vec<Operation>, Vec<Operation>),
+    // Check, TrueBranch, FalseBranch
+    Conditional{condition: Vec<Operation>, on_true: Vec<Operation>, on_false: Vec<Operation>},
 }
 
 pub fn as_str(ops: &Vec<Operation>) -> String {
@@ -65,8 +63,7 @@ impl Operation {
     pub fn as_str(&self) -> String {
         return match self {
             Operation::Execute(fragment) => { format!("execute {}", fragment.as_str()) },
-            Operation::If(op1, op2) => { format!("if({}) {{ {} }}", as_str(op1), as_str(op2)) },
-            Operation::IfElse(op1, op2, op3) => { format!("if({}) {{ {} }} else {{ {} }}", as_str(op1), as_str(op2), as_str(op3) ) },
+            Operation::Conditional{ condition, on_true, on_false } => { format!("condition({}) {{ {} }} else {{ {} }}", as_str(condition), as_str(on_true), as_str(on_false)) },
         }
     }
 }

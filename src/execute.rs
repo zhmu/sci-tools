@@ -107,8 +107,7 @@ pub enum ResultOp {
 
 pub enum BranchIf {
     Never,
-    True(intermediate::Expression),
-    False(intermediate::Expression),
+    Condition(intermediate::Expression),
 }
 
 pub struct VM<'a> {
@@ -403,18 +402,10 @@ impl<'a> VM<'a> {
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
             },
-            intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr} => {
-                let expr = simplify_expr(&mut self.state, expr);
+            intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond} => {
+                let cond = simplify_expr(&mut self.state, cond);
                 if let BranchIf::Never = self.branch {
-                    self.branch = BranchIf::False(expr.clone());
-                } else {
-                    panic!();
-                }
-            }
-            intermediate::IntermediateCode::BranchTrue{ taken_offset: _, next_offset: _, expr} => {
-                let expr = simplify_expr(&mut self.state, expr);
-                if let BranchIf::Never = self.branch {
-                    self.branch = BranchIf::True(expr.clone());
+                    self.branch = BranchIf::Condition(cond.clone());
                 } else {
                     panic!();
                 }

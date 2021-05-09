@@ -26,8 +26,7 @@ fn is_unconditional_branch(ii: &intermediate::Instruction) -> Option<intermediat
 fn is_conditional_branch(ii: &intermediate::Instruction) -> Option<(intermediate::Offset, intermediate::Offset)> {
     let ic = ii.ops.last().unwrap();
     match ic {
-        intermediate::IntermediateCode::BranchTrue{ taken_offset, next_offset, expr: _ } => { Some((*taken_offset, *next_offset)) },
-        intermediate::IntermediateCode::BranchFalse{ taken_offset, next_offset, expr: _ } => { Some((*taken_offset, *next_offset)) },
+        intermediate::IntermediateCode::Branch{ taken_offset, next_offset, cond: _ } => { Some((*taken_offset, *next_offset)) },
         _ => { None }
     }
 }
@@ -36,8 +35,7 @@ fn must_split(ii: &intermediate::Instruction) -> bool {
     let ic = ii.ops.last().unwrap();
     match ic {
         intermediate::IntermediateCode::BranchAlways(_) => { true },
-        intermediate::IntermediateCode::BranchTrue{ taken_offset: _, next_offset: _, expr: _ } => { true },
-        intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr: _ } => { true },
+        intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
         intermediate::IntermediateCode::Return() => { true },
         _ => { false }
     }

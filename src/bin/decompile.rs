@@ -135,7 +135,7 @@ fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatt
         result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
-        execute::BranchIf::True(_) | execute::BranchIf::False(_) => { unreachable!() },
+        execute::BranchIf::Condition(_) => { unreachable!() },
         execute::BranchIf::Never => { }
     }
     result
@@ -165,11 +165,17 @@ fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::E
             };
             intermediate::Expression::Binary(op, expr1.clone(), expr2.clone())
         },
+        intermediate::Expression::Unary(op, expr1) => {
+            match op {
+                intermediate::UnaryOp::LogicNot => { expr1.as_ref().clone() }
+                _ => { just_prepend_logic_not(expr) }
+            }
+        },
         _ => { just_prepend_logic_not(expr) }
     }
 }
 
-fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction], invert_cond: bool) -> String {
     let mut vm = execute::VM::new(&state, class_definitions);
     for ins in instructions {
         for op in &ins.ops {
@@ -185,12 +191,14 @@ fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatte
         result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
-        execute::BranchIf::True(expr) => {
-            result += format!("{}{:?}\n", indent, formatter.format_expression(&expr)).as_str();
-        },
-        execute::BranchIf::False(expr) => {
-            let expr = invert_boolean_expression(&expr);
-            result += format!("{}{:?}\n", indent, formatter.format_expression(&expr)).as_str();
+        execute::BranchIf::Condition(expr) => {
+            let expr_to_format;
+            if invert_cond {
+                expr_to_format = invert_boolean_expression(&expr);
+            } else {
+                expr_to_format = expr;
+            }
+            result += format!("{}{}\n", indent, formatter.format_expression(&expr_to_format)).as_str();
         },
         execute::BranchIf::Never => { unreachable!() }
     }
@@ -204,37 +212,32 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, clas
     let mut result = String::new();
     for op in ops {
         match op {
-            code::Operation::IfElse(code, true_code, false_code) => {
-                assert_eq!(1, code.len());
-                let (code, if_condition) = split_if_code(&code);
+            code::Operation::Conditional{ condition, on_true, on_false } => {
+                assert_eq!(1, condition.len());
+                let (code, if_condition) = split_if_code(&condition);
 
-                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
-                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition);
-                let if_code = if_code.trim();
-
-                let mut true_state = state.clone();
                 let mut false_state = state.clone();
-                let true_code = convert_code(&mut true_state, formatter, class_definitions, &true_code, level + 1);
-                let false_code = convert_code(&mut false_state, formatter, class_definitions, &false_code, level + 1);
-                result += &code;
-                result += format!("{}if ({}) {{\n", indent, if_code).as_str();
-                result += &true_code;
-                result += format!("{}}} else {{\n", indent).as_str();
-                result += &false_code;
-                result += format!("{}}}\n", indent).as_str();
-            },
-            code::Operation::If(code, true_code) => {
-                assert_eq!(1, code.len());
-                let (code, if_condition) = split_if_code(&code);
-                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
-                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition);
-                let if_code = if_code.trim();
+                let false_code = convert_code(&mut false_state, formatter, class_definitions, &on_false, level + 1);
 
-                let mut true_state = state.clone();
-                let true_code = convert_code(&mut true_state, formatter, class_definitions, &true_code, level + 1);
+                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
                 result += &code;
+
+                // The compiler prefers to invert conditions (likely some optimisation?) so if we
+                // assume that all conditions are inverted (i.e.  if the comparison is false, it
+                // corresponds to the thing being checked). This greatly improves decompiler
+                // output.
+                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition, true);
+                let if_code = if_code.trim();
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
-                result += &true_code;
+                result += &false_code;
+
+                if !on_true.is_empty() {
+                    let mut true_state = state.clone();
+                    let true_code = convert_code(&mut true_state, formatter, class_definitions, &on_true, level + 1);
+
+                    result += format!("{}}} else {{\n", indent).as_str();
+                    result += &true_code;
+                }
                 result += format!("{}}}\n", indent).as_str();
             },
             code::Operation::Execute(frag) => {
@@ -253,25 +256,16 @@ fn format_ops(ops: &Vec<code::Operation>, level: i32) -> String {
     let mut result = String::new();
     for op in ops {
         match op {
-            code::Operation::IfElse(code, true_code, false_code) => {
-                let code = format_ops(&code, level + 1);
-                let true_code = format_ops(&true_code, level + 1);
-                let false_code = format_ops(&false_code, level + 1);
-                result += format!("{}if (\n", indent).as_str();
+            code::Operation::Conditional{ condition, on_true, on_false } => {
+                let code = format_ops(&condition, level + 1);
+                let true_code = format_ops(&on_true, level + 1);
+                let false_code = format_ops(&on_false, level + 1);
+                result += format!("{}condition (\n", indent).as_str();
                 result += &code;
-                result += format!("{}) then {{\n", indent).as_str();
+                result += format!("{}) true {{\n", indent).as_str();
                 result += &true_code;
-                result += format!("{}}} else {{\n", indent).as_str();
+                result += format!("{}}} false {{\n", indent).as_str();
                 result += &false_code;
-                result += format!("{}}}\n", indent).as_str();
-            },
-            code::Operation::If(code, true_code) => {
-                let code = format_ops(&code, level + 1);
-                let true_code = format_ops(&true_code, level + 1);
-                result += format!("{}if (\n", indent).as_str();
-                result += &code;
-                result += format!("{}) then {{\n", indent).as_str();
-                result += &true_code;
                 result += format!("{}}}\n", indent).as_str();
             },
             code::Operation::Execute(frag) => {
@@ -288,8 +282,7 @@ fn format_ops(ops: &Vec<code::Operation>, level: i32) -> String {
 fn find_offset(op: &code::Operation) -> u16 {
     match op {
         code::Operation::Execute(frag) => { frag.get_start_offset() },
-        code::Operation::IfElse(code, _, _) => { find_offset(code.first().unwrap()) }
-        code::Operation::If(code, _) => { find_offset(code.first().unwrap()) }
+        code::Operation::Conditional{ condition, .. } => { find_offset(condition.first().unwrap()) }
     }
 }
 

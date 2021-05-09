@@ -88,7 +88,7 @@ fn reduce_graph_if_else(graph: &mut code::CodeGraph) -> bool {
 
         let node = &graph[n];
 
-        let ops = vec![ code::Operation::IfElse(node.ops.clone(), graph[true_target].ops.clone(), graph[false_target].ops.clone() ) ];
+        let ops = vec![ code::Operation::Conditional{ condition: node.ops.clone(), on_true: graph[true_target].ops.clone(), on_false: graph[false_target].ops.clone() } ];
         let code_block = code::CodeNode{ script: node.script, ops };
         let new_node = graph.add_node(code_block);
         let nodes: Vec<(NodeIndex, code::CodeEdge)> = graph.edges_directed(n, Incoming).map(|e| (e.source(), e.weight().clone())).collect();
@@ -141,7 +141,7 @@ fn reduce_graph_if(graph: &mut code::CodeGraph) -> bool {
          */
 
         let node = &graph[n];
-        let ops = vec![ code::Operation::If(node.ops.clone(), graph[false_target].ops.clone()) ];
+        let ops = vec![ code::Operation::Conditional{ condition: node.ops.clone(), on_true: vec![], on_false: graph[false_target].ops.clone() }];
         let code_node = code::CodeNode{ script: node.script, ops };
         let new_node = graph.add_node(code_node);
 

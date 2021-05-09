@@ -71,8 +71,7 @@ pub enum Expression {
 #[derive(Debug,Clone)]
 pub enum IntermediateCode {
     Assign(Operand, Expression),
-    BranchTrue{ taken_offset: Offset, next_offset: Offset, expr: Expression },
-    BranchFalse{ taken_offset: Offset, next_offset: Offset, expr: Expression },
+    Branch{ taken_offset: Offset, next_offset: Offset, cond: Expression },
     BranchAlways(Offset),
     Call(Offset, FrameSize),
     KCall(Register, FrameSize),
@@ -250,12 +249,13 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         0x2e | 0x2f => { // bt
             let taken_offset = script::relpos0_to_absolute_offset(&ins);
             let next_offset: Offset = (ins.offset + ins.bytes.len()).try_into().unwrap();
-            result.push(IntermediateCode::BranchTrue{taken_offset, next_offset, expr: expr_acc()});
+            result.push(IntermediateCode::Branch{taken_offset, next_offset, cond: expr_acc()});
         },
         0x30 | 0x31 => { // bnt
             let taken_offset = script::relpos0_to_absolute_offset(&ins);
             let next_offset: Offset = (ins.offset + ins.bytes.len()).try_into().unwrap();
-            result.push(IntermediateCode::BranchFalse{taken_offset, next_offset, expr: expr_acc()});
+            let expr = Expression::Unary(UnaryOp::LogicNot, new_box_acc());
+            result.push(IntermediateCode::Branch{taken_offset, next_offset, cond: expr});
         },
         0x32 | 0x33 => { // jmp
             let next_offset = script::relpos0_to_absolute_offset(&ins);

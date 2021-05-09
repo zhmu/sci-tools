@@ -14,13 +14,10 @@ fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
                 let label = format!("local_{:x}", addr);
                 labels.insert(*addr, label);
             },
-            intermediate::IntermediateCode::BranchAlways(addr) => {
+            intermediate::IntermediateCode::BranchAlways(addr) |
+            intermediate::IntermediateCode::Branch{ taken_offset: addr, next_offset: _, cond: _ } => {
                 let label = format!("local_{:x}", addr);
                 labels.insert(*addr, label);
-            },
-            intermediate::IntermediateCode::BranchTrue{ taken_offset, next_offset: _, expr: _ } | intermediate::IntermediateCode::BranchFalse{ taken_offset, next_offset: _, expr: _ } => {
-                let label = format!("local_{:x}", taken_offset);
-                labels.insert(*taken_offset, label);
             },
             _ => { }
         }

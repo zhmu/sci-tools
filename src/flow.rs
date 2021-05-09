@@ -106,9 +106,8 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                         _ => { }
                     }
                 },
-                intermediate::IntermediateCode::BranchTrue{ taken_offset: _, next_offset: _, expr } |
-                intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr } => {
-                    process_expr_to_input_regs(&vm.state, expr, &mut inputs, &outputs);
+                intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond } => {
+                    process_expr_to_input_regs(&vm.state, cond, &mut inputs, &outputs);
                 },
                 intermediate::IntermediateCode::BranchAlways(_) => { },
                 intermediate::IntermediateCode::Call(_, _) | intermediate::IntermediateCode::CallE(_, _, _) => {
@@ -190,8 +189,7 @@ fn append_assign_to_helper(node: &mut code::CodeNode, var_index: usize, op: &int
         // otherwise, our instruction is the final value and must be in front
         let last_ops = &mut frag.instructions.last_mut().unwrap().ops;
         match last_ops.last().unwrap() {
-            intermediate::IntermediateCode::BranchTrue{ taken_offset: _,  next_offset: _, expr: _}
-            | intermediate::IntermediateCode::BranchFalse{ taken_offset: _, next_offset: _, expr: _ }
+            intermediate::IntermediateCode::Branch{ taken_offset: _,  next_offset: _, cond: _}
             | intermediate::IntermediateCode::BranchAlways(_) => {
                 let last_op = last_ops.pop().unwrap();
                 last_ops.push(ins);
