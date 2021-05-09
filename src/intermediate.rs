@@ -481,6 +481,15 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                 oper = 0;
             }
 
+            // sa[gltp]i will pop for the actual value to store from the stack and store it in the
+            // accumulator
+            let value_from_stack;
+            if oper == 1 && !on_stack && acc_modifier {
+                value_from_stack = true;
+            } else {
+                value_from_stack = false;
+            }
+
             match oper {
                 0 => { // load
                     if on_stack {
@@ -491,13 +500,16 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                 },
                 1 => { // store
                     let source;
-                    if on_stack {
+                    if on_stack || value_from_stack {
                         result.append(&mut pre_pop());
                         source = Operand::Tos;
                     } else {
                         source = Operand::Acc;
                     }
                     result.push(IntermediateCode::Assign(op, Expression::Operand(source)));
+                    if value_from_stack {
+                        result.push(IntermediateCode::Assign(Operand::Acc, expr_tos()));
+                    }
                 },
                 _ => { unreachable!() }
             }
