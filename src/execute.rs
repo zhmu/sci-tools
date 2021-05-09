@@ -3,7 +3,7 @@ use crate::{intermediate, class_defs};
 use std::fmt;
 use std::collections::HashSet;
 
-const STACK_SIZE: intermediate::Value = 1024;
+const STACK_SIZE: intermediate::Value = 2048;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
@@ -239,15 +239,33 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             return state.prev.clone();
         },
         intermediate::Expression::Operand(intermediate::Operand::Imm(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::Param(expr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::Param(Box::new(expr)));
+        },
+        intermediate::Expression::Operand(intermediate::Operand::Global(expr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::Global(Box::new(expr)));
+        },
+        intermediate::Expression::Operand(intermediate::Operand::Local(expr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::Local(Box::new(expr)));
+        },
+        intermediate::Expression::Operand(intermediate::Operand::Temp(expr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::Temp(Box::new(expr)));
+        },
+        intermediate::Expression::Operand(intermediate::Operand::Property(expr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::Property(Box::new(expr)));
+        },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::SelectorValue(_, _)) => { return expr.clone(); },
+        intermediate::Expression::Operand(intermediate::Operand::SelectorValue(expr, nr)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            return intermediate::Expression::Operand(intermediate::Operand::SelectorValue(Box::new(expr), nr));
+        },
         intermediate::Expression::Binary(op, a, b) => {
             let a = simplify_expr2(state, state_seen, *a);
             let b = simplify_expr2(state, state_seen, *b);
