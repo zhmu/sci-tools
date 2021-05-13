@@ -13,25 +13,16 @@ impl<'a> Formatter<'a> {
 
     fn format_operand(&self, op: &intermediate::Operand) -> String {
         match op {
-            intermediate::Operand::Global(expr) => {
+            intermediate::Operand::Variable(par, expr) => {
                 let expr = self.format_expression(expr);
-                format!("global({})", expr)
-            },
-            intermediate::Operand::Local(expr) => {
-                let expr = self.format_expression(expr);
-                format!("local({})", expr)
-            },
-            intermediate::Operand::Temp(expr) => {
-                let expr = self.format_expression(expr);
-                format!("temp({})", expr)
-            },
-            intermediate::Operand::Param(expr) => {
-                let expr = self.format_expression(expr);
-                format!("param({})", expr)
-            },
-            intermediate::Operand::Property(expr) => {
-                let expr = self.format_expression(expr);
-                format!("property({})", expr)
+                let prefix = match par {
+                    intermediate::Parameter::Global => { "global" },
+                    intermediate::Parameter::Local => { "local" },
+                    intermediate::Parameter::Temp => { "temp" },
+                    intermediate::Parameter::Parameter => { "parameter" },
+                    intermediate::Parameter::Property => { "property" },
+                };
+                format!("{}({})", prefix, expr)
             },
             intermediate::Operand::Imm(val) => {
                 format!("{}", val)

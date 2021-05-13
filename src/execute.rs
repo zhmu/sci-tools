@@ -170,11 +170,7 @@ fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<intermediate::Value>) ->
 pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<intermediate::Value> {
     return match expr {
         intermediate::Expression::Operand(intermediate::Operand::Imm(n)) => { Some(*n) },
-        intermediate::Expression::Operand(intermediate::Operand::Param(_)) => { None },
-        intermediate::Expression::Operand(intermediate::Operand::Global(_)) => { None },
-        intermediate::Expression::Operand(intermediate::Operand::Temp(_)) => { None },
-        intermediate::Expression::Operand(intermediate::Operand::Local(_)) => { None },
-        intermediate::Expression::Operand(intermediate::Operand::Property(_)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::Variable(..)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { None },
@@ -239,25 +235,9 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             return state.prev.clone();
         },
         intermediate::Expression::Operand(intermediate::Operand::Imm(_)) => { return expr.clone(); },
-        intermediate::Expression::Operand(intermediate::Operand::Param(expr)) => {
+        intermediate::Expression::Operand(intermediate::Operand::Variable(par, expr)) => {
             let expr = simplify_expr2(state, state_seen, *expr);
-            return intermediate::Expression::Operand(intermediate::Operand::Param(Box::new(expr)));
-        },
-        intermediate::Expression::Operand(intermediate::Operand::Global(expr)) => {
-            let expr = simplify_expr2(state, state_seen, *expr);
-            return intermediate::Expression::Operand(intermediate::Operand::Global(Box::new(expr)));
-        },
-        intermediate::Expression::Operand(intermediate::Operand::Local(expr)) => {
-            let expr = simplify_expr2(state, state_seen, *expr);
-            return intermediate::Expression::Operand(intermediate::Operand::Local(Box::new(expr)));
-        },
-        intermediate::Expression::Operand(intermediate::Operand::Temp(expr)) => {
-            let expr = simplify_expr2(state, state_seen, *expr);
-            return intermediate::Expression::Operand(intermediate::Operand::Temp(Box::new(expr)));
-        },
-        intermediate::Expression::Operand(intermediate::Operand::Property(expr)) => {
-            let expr = simplify_expr2(state, state_seen, *expr);
-            return intermediate::Expression::Operand(intermediate::Operand::Property(Box::new(expr)));
+            return intermediate::Expression::Operand(intermediate::Operand::Variable(par, Box::new(expr)));
         },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { return expr.clone(); },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { return expr.clone(); },
@@ -352,7 +332,7 @@ impl<'a> VM<'a> {
                         let index = self.state.get_sp_index();
                         self.state.stack[index] = simplify_expr(&mut self.state, expr);
                     },
-                    intermediate::Operand::Property(n) => {
+                    intermediate::Operand::Variable(par, n) => {
                         let result;
                         let expr = simplify_expr(&mut self.state, &expr);
                         if let Some(v) = expr_to_value(&self.state, &expr) {
@@ -361,40 +341,14 @@ impl<'a> VM<'a> {
                             result = expr.clone();
                         }
                         let n = simplify_expr(&mut self.state, n);
-                        self.ops.push(ResultOp::AssignProperty(n, result));
-                    },
-                    intermediate::Operand::Global(n) => {
-                        let result;
-                        let expr = simplify_expr(&mut self.state, &expr);
-                        if let Some(v) = expr_to_value(&self.state, &expr) {
-                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
-                        } else {
-                            result = expr.clone();
-                        }
-                        let n = simplify_expr(&mut self.state, n);
-                        self.ops.push(ResultOp::AssignGlobal(n, result));
-                    },
-                    intermediate::Operand::Local(n) => {
-                        let result;
-                        let expr = simplify_expr(&mut self.state, &expr);
-                        if let Some(v) = expr_to_value(&self.state, &expr) {
-                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
-                        } else {
-                            result = expr.clone();
-                        }
-                        let n = simplify_expr(&mut self.state, n);
-                        self.ops.push(ResultOp::AssignLocal(n, result));
-                    },
-                    intermediate::Operand::Temp(n) => {
-                        let result;
-                        let expr = simplify_expr(&mut self.state, &expr);
-                        if let Some(v) = expr_to_value(&self.state, &expr) {
-                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
-                        } else {
-                            result = expr.clone();
-                        }
-                        let n = simplify_expr(&mut self.state, n);
-                        self.ops.push(ResultOp::AssignTemp(n, result));
+                        let op = match par {
+                            intermediate::Parameter::Global => { ResultOp::AssignGlobal(n, result) },
+                            intermediate::Parameter::Local => { ResultOp::AssignLocal(n, result) },
+                            intermediate::Parameter::Temp => { ResultOp::AssignTemp(n, result) },
+                            intermediate::Parameter::Parameter => { ResultOp::AssignParam(n, result) },
+                            intermediate::Parameter::Property => { ResultOp::AssignProperty(n, result) }
+                        };
+                        self.ops.push(op);
                     },
                     intermediate::Operand::HelperVariable(n) => {
                         let result;
@@ -405,17 +359,6 @@ impl<'a> VM<'a> {
                             result = expr.clone();
                         }
                         self.ops.push(ResultOp::AssignHelperVar(*n, result));
-                    },
-                    intermediate::Operand::Param(n) => {
-                        let result;
-                        let expr = simplify_expr(&mut self.state, &expr);
-                        if let Some(v) = expr_to_value(&self.state, &expr) {
-                            result = intermediate::Expression::Operand(intermediate::Operand::Imm(v));
-                        } else {
-                            result = expr.clone();
-                        }
-                        let n = simplify_expr(&mut self.state, n);
-                        self.ops.push(ResultOp::AssignParam(n, result));
                     },
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }

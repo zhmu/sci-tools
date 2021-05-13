@@ -9,12 +9,18 @@ pub type ScriptID = Value;
 pub type FrameSize = Value;
 
 #[derive(Debug,Clone)]
+pub enum Parameter {
+    Global,
+    Local,
+    Temp,
+    Parameter,
+    Property
+}
+
+
+#[derive(Debug,Clone)]
 pub enum Operand {
-    Global(Box<Expression>),
-    Local(Box<Expression>),
-    Temp(Box<Expression>),
-    Param(Box<Expression>),
-    Property(Box<Expression>),
+    Variable(Parameter, Box<Expression>),
     Imm(Register),
     HelperVariable(usize),
     SelectorValue(Box<Expression>, Register),
@@ -162,6 +168,21 @@ fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
     result.append(&mut pre_pop());
     result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_acc(), new_box_tos())));
     result
+}
+
+fn vtype_to_variable(vtype: u8, arg: Expression ) -> Operand {
+    let par = match vtype {
+        0 => { Parameter::Global },
+        1 => { Parameter::Local },
+        2 => { Parameter::Temp },
+        3 => { Parameter::Parameter },
+        _ => { unreachable!() }
+    };
+    Operand::Variable(par, Box::new(arg))
+}
+
+fn make_property_op(nr: Register) -> Operand {
+    Operand::Variable(Parameter::Property, new_box_imm(nr))
 }
 
 pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
@@ -356,7 +377,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         0x5a | 0x5b => { // lea
             let vt: Register = ins.args[0];
             let vi: Register = ins.args[1];
-            let vtype = (vt >> 1) & 3;
+            let vtype: u8 = ((vt >> 1) & 3).try_into().unwrap();
 
             let arg;
             if (vt & 0x10) != 0 {
@@ -366,17 +387,10 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                 arg = Expression::Operand(Operand::Imm(vi));
             }
 
-            let op;
-            match vtype {
-                0 => { op = Operand::Global(Box::new(arg)); },
-                1 => { op = Operand::Local(Box::new(arg)); },
-                2 => { op = Operand::Temp(Box::new(arg)); },
-                3 => { op = Operand::Param(Box::new(arg)); },
-                _ => { unreachable!() }
-            }
+            let op = vtype_to_variable(vtype, arg);
 
             // TODO this needs verification to ensure it is correct
-            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Address(Box::new(Expression::Operand(op)))));
+            result.push(IntermediateCode::Assign(Operand::Acc, Expression::Address(new_box_expr(op))));
         },
         0x5c | 0x5d => { // selfid
             result.push(IntermediateCode::Assign(Operand::Acc, expr_self()));
@@ -388,39 +402,39 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut do_push(expr_prev()));
         },
         0x62 | 0x63 => { // ptoa
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x64 | 0x65 => { // atop
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.push(IntermediateCode::Assign(op, Expression::Operand(Operand::Acc)));
         },
         0x66 | 0x67 => { // ptos
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut do_push(Expression::Operand(op)));
         },
         0x68 | 0x69 => { // stop
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut pre_pop());
             result.push(IntermediateCode::Assign(op, expr_tos()));
         },
         0x6a | 0x6b => { // iptoa
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut apply_to_op(op.clone(), What::Add(1)));
             result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x6c | 0x6d => { // dptoa
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut apply_to_op(op.clone(), What::Subtract(1)));
             result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(op)));
         },
         0x6e | 0x6f => { // iptos
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut apply_to_op(op.clone(), What::Add(1)));
             result.append(&mut do_push(Expression::Operand(op)));
         },
         0x70 | 0x71 => { // dptos
-            let op = Operand::Property(new_box_imm(ins.args[0]));
+            let op = make_property_op(ins.args[0]);
             result.append(&mut apply_to_op(op.clone(), What::Subtract(1)));
             result.append(&mut do_push(Expression::Operand(op)));
         },
@@ -462,16 +476,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             } else {
                 arg = Expression::Operand(Operand::Imm(index));
             }
-
-            let op;
-            match typ {
-                0 => { op = Operand::Global(Box::new(arg)); },
-                1 => { op = Operand::Local(Box::new(arg)); },
-                2 => { op = Operand::Temp(Box::new(arg)); },
-                3 => { op = Operand::Param(Box::new(arg)); },
-                _ => { unreachable!() }
-            }
-
+            let op = vtype_to_variable(typ, arg);
 
             if oper == 2 { // inc+load
                 result.push(IntermediateCode::Assign(op.clone(), Expression::Binary(BinaryOp::Add, Box::new(Expression::Operand(op.clone())), new_box_imm(1))));
