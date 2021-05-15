@@ -24,6 +24,7 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Operand(op) => {
             match op {
                 intermediate::Operand::Acc => { regs.insert(UsedRegister::Acc); },
+/*
                 intermediate::Operand::Tos => {
                     if let Some(sp) = execute::expr_to_value(&state, &state.sp) {
                         regs.insert(UsedRegister::Stack(sp));
@@ -31,6 +32,7 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
                         panic!("cannot resolve sp value for tos");
                     }
                 },
+*/
                 _ => { }
             }
         },
@@ -44,6 +46,7 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Address(_) => { },
         intermediate::Expression::Class(_) => { },
         intermediate::Expression::Undefined => { },
+        intermediate::Expression::DotDotDot => { },
     }
 }
 
@@ -80,7 +83,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
     let mut outputs: HashSet<UsedRegister> = HashSet::new();
 
     let mut vm = execute::VM::new(&execute::VMState::new(), class_definitions);
-    vm.state.sp = intermediate::Expression::Operand(intermediate::Operand::Imm(40));
 
     for ins in &frag.instructions {
         for op in &ins.ops {
@@ -95,7 +97,8 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                         intermediate::Operand::Acc => {
                             outputs.insert(UsedRegister::Acc);
                         },
-                        intermediate::Operand::Sp => { },
+                        //intermediate::Operand::Sp => { },
+/*
                         intermediate::Operand::Tos => {
                             if let Some(sp) = execute::expr_to_value(&vm.state, &vm.state.sp) {
                                 outputs.insert(UsedRegister::Stack(sp));
@@ -103,9 +106,12 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                                 panic!("cannot resolve sp value for tos");
                             }
                         },
+*/
                         _ => { }
                     }
                 },
+                intermediate::IntermediateCode::Push(..) => { },
+                intermediate::IntermediateCode::Rest(..) => { },
                 intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond } => {
                     process_expr_to_input_regs(&vm.state, cond, &mut inputs, &outputs);
                 },
@@ -120,14 +126,12 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                     }
                 },
                 intermediate::IntermediateCode::Return() => { },
-                intermediate::IntermediateCode::Rest(_) => { },
                 intermediate::IntermediateCode::Send(_, frame_size) => {
-                    let values = vm.get_stack_values(*frame_size);
-                    let n_args = (*frame_size as usize) / 2;
+                    let values = vm.get_stack_values((*frame_size / 2).into());
 
                     println!("values {:?}", values);
                     let mut n: usize = 0;
-                    while n < n_args {
+                    while n < values.len() {
                         let selector = &values[n];
                         let num_values = &values[n + 1];
                         if let Some(num_values) = execute::expr_to_value(&vm.state, &num_values) {
@@ -153,12 +157,7 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
         }
     }
 
-
-    if let Some(sp) = execute::expr_to_value(&vm.state, &vm.state.sp) {
-        outputs = remove_unreachable_stack_regs(&mut outputs, sp);
-    } else {
-        panic!("cannot resolve sp value");
-    }
+    //outputs = remove_unreachable_stack_regs(&mut outputs, sp);
     InOut{ inputs, outputs }
 }
 

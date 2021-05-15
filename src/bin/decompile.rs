@@ -124,7 +124,7 @@ fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatt
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
-                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                println!(">> execute {:04x} {:?}", ins.offset, op);
             }
             vm.execute(&op);
         }
@@ -180,7 +180,7 @@ fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatte
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
-                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                println!(">> execute {:04x} {:?}", ins.offset, op);
             }
             vm.execute(&op);
         }
@@ -417,6 +417,7 @@ fn main() -> Result<(), ScriptError> {
     let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
     let mut out_file = File::create(format!("{}/{}.txt", out_path, script_id))?;
 
+    println!("> Parsing non-code blocks...");
     let mut object_classes: Vec<object_class::ObjectClass> = Vec::new();
     let mut saids: Vec<said::Said> = Vec::new();
     for block in &script.blocks {
@@ -447,20 +448,26 @@ fn main() -> Result<(), ScriptError> {
         }
         match block.r#type {
             script::BlockType::Code => {
+                println!("> Processing code block at offset {:x}", block.base);
                 let code_blocks = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&code_blocks);
 
+                println!("> Performing flow analysis...");
                 flow::analyse_inout(&mut graph, &class_definitions);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
+                println!("> Reducing graph...");
                 reduce::reduce_graph(&mut graph);
+
+                println!("> Analysing graph...");
                 analyse_graph(&graph);
 
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
+                println!("> Writing code...");
                 write_code(&mut int_file, &mut out_file, &formatter, &class_definitions, &graph)?;
             },
             _ => { }

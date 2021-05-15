@@ -26,12 +26,10 @@ pub enum Operand {
     SelectorValue(Box<Expression>, Register),
     Acc,
     Prev,
-    Sp,
-    Tos,
-    Rest,
     OpSelf,
     Tmp,
     CallResult,
+    Pop
 }
 
 #[derive(Debug,Clone)]
@@ -67,6 +65,7 @@ pub enum UnaryOp {
 #[derive(Debug,Clone)]
 pub enum Expression {
     Undefined,
+    DotDotDot,
     Operand(Operand),
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
@@ -77,6 +76,7 @@ pub enum Expression {
 #[derive(Debug,Clone)]
 pub enum IntermediateCode {
     Assign(Operand, Expression),
+    Push(Expression),
     Branch{ taken_offset: Offset, next_offset: Offset, cond: Expression },
     BranchAlways(Offset),
     Call(Offset, FrameSize),
@@ -84,7 +84,7 @@ pub enum IntermediateCode {
     CallE(ScriptID, Register, FrameSize),
     Return(),
     Send(Expression, FrameSize),
-    Rest(Register),
+    Rest(FrameSize),
 }
 
 #[derive(Debug,Clone)]
@@ -98,8 +98,9 @@ fn expr_acc() -> Expression { Expression::Operand(Operand::Acc) }
 fn expr_prev() -> Expression { Expression::Operand(Operand::Prev) }
 fn expr_imm(n: Register) -> Expression { Expression::Operand(Operand::Imm(n)) }
 fn expr_self() -> Expression { Expression::Operand(Operand::OpSelf) }
-fn expr_tos() -> Expression { Expression::Operand(Operand::Tos) }
 fn expr_tmp() -> Expression { Expression::Operand(Operand::Tmp) }
+fn expr_pop() -> Expression { Expression::Operand(Operand::Pop) }
+fn expr_dotdotdot() -> Expression { Expression::DotDotDot }
 
 fn new_box_expr(op: Operand) -> Box<Expression> {
     Box::new(Expression::Operand(op))
@@ -107,25 +108,7 @@ fn new_box_expr(op: Operand) -> Box<Expression> {
 
 fn new_box_imm(n: Register) -> Box<Expression> { new_box_expr(Operand::Imm(n)) }
 fn new_box_acc() -> Box<Expression> { new_box_expr(Operand::Acc) }
-fn new_box_sp() -> Box<Expression> { new_box_expr(Operand::Sp) }
-fn new_box_rest() -> Box<Expression> { new_box_expr(Operand::Rest) }
-fn new_box_tos() -> Box<Expression> { new_box_expr(Operand::Tos) }
-
-fn adjust_sp_before_call(frame_size: FrameSize) -> Vec<IntermediateCode> {
-    // sp -= frame_size + 2 + &rest_modifier, &rest_modifier = 0
-    let amount = new_box_imm(frame_size + 2);
-    vec![
-        IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Subtract, new_box_sp(), Box::new(Expression::Binary(BinaryOp::Add, amount, new_box_rest())))),
-        IntermediateCode::Assign(Operand::Rest, expr_imm(0))
-    ]
-}
-
-fn adjust_sp_before_send(frame_size: FrameSize) -> Vec<IntermediateCode> {
-    let amount = frame_size;
-    vec![
-        IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Subtract, new_box_sp(), new_box_imm(amount)))
-    ]
-}
+fn new_box_pop() -> Box<Expression> { new_box_expr(Operand::Pop) }
 
 enum What {
     Add(Register),
@@ -145,28 +128,19 @@ fn apply_to_op(op: Operand, what: What) -> Vec<IntermediateCode> {
 
 fn do_push(expr: Expression) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.push(IntermediateCode::Assign(Operand::Tos, expr));
-    result.append(&mut apply_to_op(Operand::Sp, What::Add(2)));
-    result
-}
-
-fn pre_pop() -> Vec<IntermediateCode> {
-    let mut result: Vec<IntermediateCode> = Vec::new();
-    result.append(&mut apply_to_op(Operand::Sp, What::Subtract(2)));
+    result.push(IntermediateCode::Push(expr.clone()));
     result
 }
 
 fn binary_op_pop_acc(op: BinaryOp) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.append(&mut pre_pop());
-    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_tos(), new_box_acc())));
+    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_pop(), new_box_acc())));
     result
 }
 
 fn binary_op_acc_pop(op: BinaryOp) -> Vec<IntermediateCode> {
     let mut result: Vec<IntermediateCode> = Vec::new();
-    result.append(&mut pre_pop());
-    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_acc(), new_box_tos())));
+    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Binary(op, new_box_acc(), new_box_pop())));
     result
 }
 
@@ -294,60 +268,61 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
             result.append(&mut do_push(expr_imm(imm)));
         },
         0x3a | 0x3b => { // toss
-            result.append(&mut apply_to_op(Operand::Sp, What::Subtract(2)));
+            result.push(IntermediateCode::Assign(Operand::Tmp, Expression::Operand(Operand::Pop)));
         },
         0x3c | 0x3d => { // dup
-            result.append(&mut pre_pop());
-            result.push(IntermediateCode::Assign(Operand::Tmp, Expression::Operand(Operand::Tos)));
+            result.push(IntermediateCode::Assign(Operand::Tmp, Expression::Operand(Operand::Pop)));
             result.append(&mut do_push(expr_tmp()));
             result.append(&mut do_push(expr_tmp()));
         },
         0x3e | 0x3f => { // link
             let amount: Register = ins.args[0];
-            result.push(IntermediateCode::Assign(Operand::Sp, Expression::Binary(BinaryOp::Add, new_box_sp(), new_box_imm(2 * amount))));
+            for _ in 0..amount {
+                result.push(IntermediateCode::Push(Expression::Undefined)); // TODO remove later
+            }
         },
         0x40 | 0x41 => { // call
             let addr = script::relpos0_to_absolute_offset(&ins);
             let frame_size: FrameSize = ins.args[1];
-            result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::Call(addr, frame_size));
             result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
+            result.push(IntermediateCode::Rest(0));
         },
         0x42 | 0x43 => { // kcall
             let nr = ins.args[0];
             let frame_size: FrameSize = ins.args[1];
-            result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::KCall(nr, frame_size));
             if !sci::does_kcall_return_void(nr) {
                 result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
             }
+            result.push(IntermediateCode::Rest(0));
         },
         0x44 | 0x45 => { // callb
             let script: ScriptID = 0;
             let disp_index = ins.args[0];
             let frame_size: FrameSize = ins.args[1];
-            result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::CallE(script, disp_index, frame_size));
+            result.push(IntermediateCode::Rest(0));
         },
         0x46 | 0x47 => { // calle
             let script: ScriptID = ins.args[0];
             let disp_index = ins.args[1];
             let frame_size: FrameSize = ins.args[2];
-            result.append(&mut adjust_sp_before_call(frame_size));
 
             result.push(IntermediateCode::CallE(script, disp_index, frame_size));
             result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
+            result.push(IntermediateCode::Rest(0));
         },
         0x48 | 0x49 => { // ret
             result.push(IntermediateCode::Return());
         },
         0x4a | 0x4b => { // send
             let frame_size: FrameSize = ins.args[0];
-            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_acc(), frame_size));
+            result.push(IntermediateCode::Rest(0));
         },
         0x4c | 0x4d | 0x4e | 0x4f => { // ?
             panic!("invalid opcode (4c/4d/4e/4f)");
@@ -361,18 +336,19 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x54 | 0x55 => { // self
             let frame_size: FrameSize = ins.args[0];
-            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_self(), frame_size));
+            result.push(IntermediateCode::Rest(0));
         },
         0x56 | 0x57 => { // super
             let class: Register = ins.args[0];
             let frame_size: FrameSize = ins.args[1];
-            result.append(&mut adjust_sp_before_send(frame_size));
             result.push(IntermediateCode::Send(expr_imm(class), frame_size));
+            result.push(IntermediateCode::Rest(0));
         },
         0x58 | 0x59 => { // &rest
             let param_index: Register = ins.args[0];
             result.push(IntermediateCode::Rest(param_index));
+            result.append(&mut do_push(expr_dotdotdot()));
         },
         0x5a | 0x5b => { // lea
             let vt: Register = ins.args[0];
@@ -415,8 +391,7 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
         },
         0x68 | 0x69 => { // stop
             let op = make_property_op(ins.args[0]);
-            result.append(&mut pre_pop());
-            result.push(IntermediateCode::Assign(op, expr_tos()));
+            result.push(IntermediateCode::Assign(op, expr_pop()));
         },
         0x6a | 0x6b => { // iptoa
             let op = make_property_op(ins.args[0]);
@@ -506,14 +481,13 @@ pub fn convert_instruction(ins: &disassemble::Instruction) -> Instruction {
                 1 => { // store
                     let source;
                     if on_stack || value_from_stack {
-                        result.append(&mut pre_pop());
-                        source = Operand::Tos;
+                        source = Operand::Pop;
                     } else {
                         source = Operand::Acc;
                     }
                     result.push(IntermediateCode::Assign(op, Expression::Operand(source)));
                     if value_from_stack {
-                        result.push(IntermediateCode::Assign(Operand::Acc, expr_tos()));
+                        result.push(IntermediateCode::Assign(Operand::Acc, expr_pop()));
                     }
                 },
                 _ => { unreachable!() }
