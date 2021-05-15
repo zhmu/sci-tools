@@ -1,4 +1,4 @@
-use crate::{code, intermediate, script, disassemble, label};
+use crate::{code, intermediate, script, disassemble, label, translate};
 
 use std::collections::{HashMap, HashSet};
 
@@ -55,10 +55,12 @@ pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &
     let disasm = disassemble::Disassembler::new(&script_block, 0);
     let mut block_offsets: HashSet<intermediate::Offset> = HashSet::new();
 
+    let mut translator = translate::Translator::new();
+
     // Split on specific instruction
     let mut instructions: Vec<intermediate::Instruction> = Vec::new();
     for ins in disasm {
-        instructions.push(intermediate::convert_instruction(&ins));
+        instructions.push(translator.convert(&ins));
         let ii = instructions.last().unwrap().clone();
         if !must_split(&ii) { continue; }
 

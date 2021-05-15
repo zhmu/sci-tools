@@ -1,13 +1,15 @@
-use crate::{disassemble, intermediate, script};
+use crate::{disassemble, intermediate, script, translate};
 
 use std::collections::HashMap;
 
 pub type LabelMap = HashMap<intermediate::Offset, String>;
 
 fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
+    let mut translator = translate::Translator::new();
+
     let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
-        let ii = intermediate::convert_instruction(&ins);
+        let ii = translator.convert(&ins);
         let ic = ii.ops.last().unwrap();
         match ic {
             intermediate::IntermediateCode::Call(addr, _) => {
