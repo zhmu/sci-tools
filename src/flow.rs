@@ -8,8 +8,7 @@ use std::collections::{HashSet, HashMap};
 
 #[derive(Debug,PartialEq,Eq,Hash,Copy,Clone)]
 enum UsedRegister {
-    Acc,
-    Stack(intermediate::Value)
+    Acc
 }
 
 struct InOut {
@@ -24,15 +23,6 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Operand(op) => {
             match op {
                 intermediate::Operand::Acc => { regs.insert(UsedRegister::Acc); },
-/*
-                intermediate::Operand::Tos => {
-                    if let Some(sp) = execute::expr_to_value(&state, &state.sp) {
-                        regs.insert(UsedRegister::Stack(sp));
-                    } else {
-                        panic!("cannot resolve sp value for tos");
-                    }
-                },
-*/
                 _ => { }
             }
         },
@@ -46,26 +36,13 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Address(_) => { },
         intermediate::Expression::Class(_) => { },
         intermediate::Expression::Undefined => { },
-        intermediate::Expression::DotDotDot => { },
+        intermediate::Expression::Rest(..) => { },
     }
 }
 
 fn find_regs_in_expr(state: &execute::VMState, expr: &intermediate::Expression) -> HashSet<UsedRegister> {
     let mut result: HashSet<UsedRegister> = HashSet::new();
     find_regs_in_expr2(state, expr, &mut result);
-    result
-}
-
-fn remove_unreachable_stack_regs(input: &mut HashSet<UsedRegister>, sp: intermediate::Register) -> HashSet<UsedRegister> {
-    let mut result: HashSet<UsedRegister> = HashSet::new();
-    for reg in input.drain() {
-        match reg {
-            UsedRegister::Stack(n) => {
-                if n < sp { result.insert(UsedRegister::Stack(n)); }
-            },
-            _ => { result.insert(reg); }
-        }
-    }
     result
 }
 
@@ -111,7 +88,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                     }
                 },
                 intermediate::IntermediateCode::Push(..) => { },
-                intermediate::IntermediateCode::Rest(..) => { },
                 intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond } => {
                     process_expr_to_input_regs(&vm.state, cond, &mut inputs, &outputs);
                 },
@@ -126,12 +102,9 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                     }
                 },
                 intermediate::IntermediateCode::Return() => { },
-                intermediate::IntermediateCode::Send(_, frame_size) => {
-                    let values = vm.get_stack_values((*frame_size / 2).into());
-
-                    println!("values {:?}", values);
+                intermediate::IntermediateCode::Send(_, values) => {
                     let mut n: usize = 0;
-                    while n < values.len() {
+                    while n + 1 < values.len() {
                         let selector = &values[n];
                         let num_values = &values[n + 1];
                         if let Some(num_values) = execute::expr_to_value(&vm.state, &num_values) {
@@ -146,7 +119,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                                 println!("couldn't resolve selector values in send call {:?}", selector);
                             }
                             n += 2 + num_values;
-                            println!("TODO: flow/send: stack??");
                         } else {
                             println!("couldn't resolve num values in send call {:?} - not analysing further", num_values);
                             break;
@@ -157,7 +129,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
         }
     }
 
-    //outputs = remove_unreachable_stack_regs(&mut outputs, sp);
     InOut{ inputs, outputs }
 }
 
@@ -224,7 +195,6 @@ fn prepend_assign_to_helper(node: &mut code::CodeNode, var_index: usize, op: int
 fn map_usedregister_to_op(reg: UsedRegister) -> intermediate::Operand {
     return match reg {
         UsedRegister::Acc => { intermediate::Operand::Acc },
-        UsedRegister::Stack(_) => { todo!() }
     }
 }
 

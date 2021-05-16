@@ -30,6 +30,9 @@ impl<'a> Formatter<'a> {
             intermediate::Operand::HelperVariable(num) => {
                 format!("v{}", num)
             },
+            intermediate::Operand::Stack(num) => {
+                format!("s{}", num)
+            },
             intermediate::Operand::SelectorValue(expr, selector_nr) => {
                 let expr = self.format_expression(expr);
                 let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
@@ -37,7 +40,6 @@ impl<'a> Formatter<'a> {
             },
             intermediate::Operand::Acc => { "acc".to_string() },
             intermediate::Operand::Prev => { "prev".to_string() },
-            intermediate::Operand::Pop => { "pop()".to_string() },
             intermediate::Operand::OpSelf => { "self".to_string() },
             intermediate::Operand::Tmp => { "tmp".to_string() }
             intermediate::Operand::CallResult => { "callResult".to_string() }
@@ -47,7 +49,7 @@ impl<'a> Formatter<'a> {
     pub fn format_expression(&self, expr: &intermediate::Expression) -> String {
         match expr {
             intermediate::Expression::Undefined => { "undefined".to_string() },
-            intermediate::Expression::DotDotDot => { "...".to_string() },
+            intermediate::Expression::Rest(index) => { format!("...({})", index)},
             intermediate::Expression::Operand(op) => { self.format_operand(op) },
             intermediate::Expression::Binary(op, expr1, expr2) => {
                 let expr1 = self.format_expression(expr1);
@@ -232,9 +234,9 @@ impl<'a> Formatter<'a> {
             execute::ResultOp::Incomplete(msg) => {
                 format!("incomplete!({})", msg)
             },
-            execute::ResultOp::Push(expr) => {
+            execute::ResultOp::Push(n, expr) => {
                 let expr = self.format_expression(expr);
-                format!("push({})", expr)
+                format!("s{} = {}", n, expr)
             },
             execute::ResultOp::Return() => { "return".to_string() },
         }

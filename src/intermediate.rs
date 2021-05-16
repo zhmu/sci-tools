@@ -1,7 +1,3 @@
-use crate::{disassemble, script, sci};
-
-use std::convert::TryInto;
-
 pub type Value = u16;
 pub type Register = Value;
 pub type Offset = Value;
@@ -29,7 +25,7 @@ pub enum Operand {
     OpSelf,
     Tmp,
     CallResult,
-    Pop
+    Stack(usize),
 }
 
 #[derive(Debug,Clone)]
@@ -65,7 +61,7 @@ pub enum UnaryOp {
 #[derive(Debug,Clone)]
 pub enum Expression {
     Undefined,
-    DotDotDot,
+    Rest(FrameSize),
     Operand(Operand),
     Binary(BinaryOp, Box<Expression>, Box<Expression>),
     Unary(UnaryOp, Box<Expression>),
@@ -76,15 +72,14 @@ pub enum Expression {
 #[derive(Debug,Clone)]
 pub enum IntermediateCode {
     Assign(Operand, Expression),
-    Push(Expression),
+    Push(usize, Expression),
     Branch{ taken_offset: Offset, next_offset: Offset, cond: Expression },
     BranchAlways(Offset),
-    Call(Offset, FrameSize),
-    KCall(Register, FrameSize),
-    CallE(ScriptID, Register, FrameSize),
+    Call(Offset, Vec<Expression>),
+    KCall(Register, Vec<Expression>),
+    CallE(ScriptID, Register, Vec<Expression>),
     Return(),
-    Send(Expression, FrameSize),
-    Rest(FrameSize),
+    Send(Expression, Vec<Expression>),
 }
 
 #[derive(Debug,Clone)]

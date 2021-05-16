@@ -2,31 +2,20 @@ use crate::{intermediate, class_defs};
 
 use std::fmt;
 use std::collections::HashSet;
-use std::collections::VecDeque;
+use std::collections::HashMap;
 
 #[derive(Debug,Clone)]
 pub struct VMState {
     pub acc: intermediate::Expression,
     prev: intermediate::Expression,
     tmp: intermediate::Expression,
-    rest: intermediate::FrameSize,
-    stk_values: Vec<intermediate::Expression>,
-    stk_indexes: VecDeque<usize>,
+    stk_values: HashMap<usize, intermediate::Expression>,
 }
 
 impl VMState {
     pub fn new() -> Self {
         let undef = intermediate::Expression::Undefined;
-        VMState{ acc: undef.clone(), rest: 0, prev: undef.clone(), tmp: undef.clone(), stk_values: Vec::new(), stk_indexes: VecDeque::new() }
-    }
-
-    fn pop(&mut self) -> intermediate::Expression {
-        if let Some(index) = self.stk_indexes.pop_back() {
-            let value = &self.stk_values[index];
-            return value.clone();
-        }
-        println!("pop() on empty stack");
-        intermediate::Expression::Undefined
+        VMState{ acc: undef.clone(), prev: undef.clone(), tmp: undef.clone(), stk_values: HashMap::new() }
     }
 }
 
@@ -46,26 +35,19 @@ fn format_expr(expr: &intermediate::Expression) -> String {
     format!("{:?}", expr).to_string()
 }
 
-fn is_expr_undefined(expr: &intermediate::Expression) -> bool {
-    match expr {
-        intermediate::Expression::Undefined => { true },
-        _ => { false }
-    }
-}
-
 impl fmt::Display for VMState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut stack: String = String::new();
-        for item in &self.stk_values {
-            stack += &format!(" {}", format_expr(&item)).to_string();
+        for (index, value) in &self.stk_values {
+            stack += &format!(" s{}={}", index, format_expr(&value)).to_string();
         }
-        write!(f, "acc: {} rest {} prev: {}, stack{}", format_expr(&self.acc), self.rest, format_expr(&self.prev), stack)
+        write!(f, "acc: {} prev: {}, stack{}", format_expr(&self.acc), format_expr(&self.prev), stack)
     }
 }
 
 #[derive(Debug)]
 pub enum ResultOp {
-    Push(intermediate::Expression),
+    Push(usize, intermediate::Expression),
     AssignProperty(intermediate::Expression, intermediate::Expression),
     AssignGlobal(intermediate::Expression, intermediate::Expression),
     AssignTemp(intermediate::Expression, intermediate::Expression),
@@ -143,6 +125,14 @@ fn apply_unary_op(op: &intermediate::UnaryOp, a: Option<intermediate::Value>) ->
 pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option<intermediate::Value> {
     return match expr {
         intermediate::Expression::Operand(intermediate::Operand::Imm(n)) => { Some(*n) },
+        intermediate::Expression::Operand(intermediate::Operand::Stack(n)) => {
+            if let Some(expr) = state.stk_values.get(n) {
+                expr_to_value(state, expr)
+            } else {
+                println!("expr_to_value(): index {} out of range", n);
+                None
+            }
+        },
         intermediate::Expression::Operand(intermediate::Operand::Variable(..)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::HelperVariable(_)) => { None },
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
@@ -173,8 +163,14 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             }
             return state.acc.clone();
         },
-        intermediate::Expression::Operand(intermediate::Operand::Pop) => {
-            return state.pop();
+        intermediate::Expression::Operand(intermediate::Operand::Stack(n)) => {
+            if let Some(expr) = state.stk_values.get(&n) {
+                let expr = expr.clone();
+                return simplify_expr2(state, state_seen, expr);
+            } else {
+                println!("warning: stack index {} not in range (have {} values)", n, state.stk_values.len());
+                intermediate::Expression::Undefined
+            }
         },
         intermediate::Expression::Operand(intermediate::Operand::Tmp) => {
             if !state_seen.contains(&StateEnum::Tmp) {
@@ -217,7 +213,7 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         },
         intermediate::Expression::Class(_) => { return expr.clone(); },
         intermediate::Expression::Undefined => { return expr.clone(); },
-        intermediate::Expression::DotDotDot => { return expr.clone(); },
+        intermediate::Expression::Rest(..) => { return expr.clone(); },
     }
 }
 
@@ -225,29 +221,9 @@ pub fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> in
     simplify_expr2(state, &mut HashSet::new(), expr.clone())
 }
 
-fn gather_params(state: &mut VMState, frame_size: intermediate::FrameSize) -> Vec<intermediate::Expression> {
-    let mut params: Vec<intermediate::Expression> = Vec::new();
-    for _ in 0..=(frame_size / 2) {
-        let expr = state.pop();
-        let expr = simplify_expr(state, &expr);
-        params.push(expr);
-    }
-    params.reverse();
-    params
-}
-
 impl<'a> VM<'a> {
     pub fn new(state: &VMState, class_definitions: &'a class_defs::ClassDefinitions) -> Self {
         VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone(), class_definitions }
-    }
-
-    pub fn get_stack_values(&mut self, num_values: usize) -> Vec<intermediate::Expression> {
-        let mut result: Vec<intermediate::Expression> = Vec::with_capacity(num_values);
-        for _ in 0..num_values {
-            result.push(self.state.pop());
-        }
-        result.reverse();
-        result
     }
 
     pub fn execute(&mut self, ic: &intermediate::IntermediateCode) {
@@ -303,14 +279,10 @@ impl<'a> VM<'a> {
                     _ => { panic!("todo: Assign({:?}, {:?}", dest, expr); }
                 }
             },
-            intermediate::IntermediateCode::Rest(rest) => {
-                self.state.rest = *rest;
-            },
-            intermediate::IntermediateCode::Push(expr) => {
+            intermediate::IntermediateCode::Push(index, expr) => {
                 let expr = simplify_expr(&mut self.state, expr);
-                self.ops.push(ResultOp::Push(expr.clone()));
-                self.state.stk_values.push(expr);
-                self.state.stk_indexes.push_back(self.state.stk_values.len() - 1);
+                self.ops.push(ResultOp::Push(*index, expr.clone()));
+                self.state.stk_values.insert(*index, expr);
             },
             intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond} => {
                 let cond = simplify_expr(&mut self.state, cond);
@@ -326,26 +298,27 @@ impl<'a> VM<'a> {
             intermediate::IntermediateCode::Return() => {
                 self.ops.push(ResultOp::Return());
             },
-            intermediate::IntermediateCode::CallE(script, disp_index, frame_size) => {
-                let params = gather_params(&mut self.state, *frame_size);
-                self.ops.push(ResultOp::CallE(*script, *disp_index, params));
+            intermediate::IntermediateCode::CallE(script, disp_index, params) => {
+                self.ops.push(ResultOp::CallE(*script, *disp_index, params.clone()));
             },
-            intermediate::IntermediateCode::Call(addr, frame_size) => {
-                let params = gather_params(&mut self.state, *frame_size);
-                self.ops.push(ResultOp::Call(*addr, params));
+            intermediate::IntermediateCode::Call(addr, params) => {
+                self.ops.push(ResultOp::Call(*addr, params.clone()));
             },
-            intermediate::IntermediateCode::KCall(func, frame_size) => {
-                let params = gather_params(&mut self.state, *frame_size);
-                self.ops.push(ResultOp::KCall(*func, params));
+            intermediate::IntermediateCode::KCall(func, params) => {
+                self.ops.push(ResultOp::KCall(*func, params.clone()));
             },
-            intermediate::IntermediateCode::Send(expr, frame_size) => {
-                let values = self.get_stack_values((*frame_size / 2).into());
+            intermediate::IntermediateCode::Send(expr, values) => {
                 let expr = simplify_expr(&mut self.state, &expr);
 
                 let mut n: usize = 0;
                 while n < values.len() {
                     let selector = &values[n];
                     n += 1;
+                    if n >= values.len() {
+                        let msg = format!("out of arguments");
+                        self.ops.push(ResultOp::Incomplete(msg));
+                        break;
+                    }
                     if let Some(num_values) = expr_to_value(&self.state, &values[n]) {
                         let num_values = num_values as usize;
                         n += 1;
@@ -363,7 +336,8 @@ impl<'a> VM<'a> {
                                 if self.class_definitions.is_certainly_func(selector_value) {
                                     self.state.acc = intermediate::Expression::Operand(intermediate::Operand::CallResult);
                                 }
-                                self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
+                                let selector_expr = intermediate::Expression::Operand(intermediate::Operand::Imm(selector_value));
+                                self.ops.push(ResultOp::Send(expr.clone(), selector_expr, args));
                             }
                         } else {
                             let msg = format!("send: unable to convert selector value {:?} to number", selector);
