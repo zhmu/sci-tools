@@ -163,14 +163,8 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
             }
             return state.acc.clone();
         },
-        intermediate::Expression::Operand(intermediate::Operand::Stack(n)) => {
-            if let Some(expr) = state.stk_values.get(&n) {
-                let expr = expr.clone();
-                return simplify_expr2(state, state_seen, expr);
-            } else {
-                println!("warning: stack index {} not in range (have {} values)", n, state.stk_values.len());
-                intermediate::Expression::Undefined
-            }
+        intermediate::Expression::Operand(intermediate::Operand::Stack(..)) => {
+            return expr.clone();
         },
         intermediate::Expression::Operand(intermediate::Operand::Tmp) => {
             if !state_seen.contains(&StateEnum::Tmp) {
