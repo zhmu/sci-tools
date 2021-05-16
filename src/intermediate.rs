@@ -78,7 +78,7 @@ pub enum IntermediateCode {
     Call(Offset, Vec<Expression>),
     KCall(Register, Vec<Expression>),
     CallE(ScriptID, Register, Vec<Expression>),
-    Return(),
+    Return(Expression),
     Send(Expression, Vec<Expression>),
 }
 

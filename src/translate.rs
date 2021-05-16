@@ -238,7 +238,7 @@ impl Translator
                 result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
             },
             0x48 | 0x49 => { // ret
-                result.push(IntermediateCode::Return());
+                result.push(IntermediateCode::Return(expr_acc()));
             },
             0x4a | 0x4b => { // send
                 let frame_size: FrameSize = ins.args[0];

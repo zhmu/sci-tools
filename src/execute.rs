@@ -59,7 +59,7 @@ pub enum ResultOp {
     KCall(intermediate::Value, Vec<intermediate::Expression>),
     Send(intermediate::Expression, intermediate::Expression, Vec<intermediate::Expression>),
     Incomplete(String),
-    Return(),
+    Return(intermediate::Expression),
 }
 
 pub enum BranchIf {
@@ -289,8 +289,9 @@ impl<'a> VM<'a> {
             intermediate::IntermediateCode::BranchAlways(_) => {
                 //println!("BranchAlways(): don't think we need to do anything here?");
             },
-            intermediate::IntermediateCode::Return() => {
-                self.ops.push(ResultOp::Return());
+            intermediate::IntermediateCode::Return(expr) => {
+                let expr = simplify_expr(&mut self.state, expr);
+                self.ops.push(ResultOp::Return(expr));
             },
             intermediate::IntermediateCode::CallE(script, disp_index, params) => {
                 self.ops.push(ResultOp::CallE(*script, *disp_index, params.clone()));

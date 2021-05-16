@@ -36,7 +36,7 @@ fn must_split(ii: &intermediate::Instruction) -> bool {
     match ic {
         intermediate::IntermediateCode::BranchAlways(_) => { true },
         intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
-        intermediate::IntermediateCode::Return() => { true },
+        intermediate::IntermediateCode::Return(..) => { true },
         _ => { false }
     }
 }

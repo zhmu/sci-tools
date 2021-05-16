@@ -101,7 +101,7 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                         outputs.insert(UsedRegister::Acc);
                     }
                 },
-                intermediate::IntermediateCode::Return() => { },
+                intermediate::IntermediateCode::Return(..) => { },
                 intermediate::IntermediateCode::Send(_, values) => {
                     let mut n: usize = 0;
                     while n + 1 < values.len() {

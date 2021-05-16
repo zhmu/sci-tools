@@ -238,7 +238,10 @@ impl<'a> Formatter<'a> {
                 let expr = self.format_expression(expr);
                 format!("s{} = {}", n, expr)
             },
-            execute::ResultOp::Return() => { "return".to_string() },
+            execute::ResultOp::Return(expr) => {
+                let expr = self.format_expression(expr);
+                format!("return {}", expr)
+            }
         }
     }
 
