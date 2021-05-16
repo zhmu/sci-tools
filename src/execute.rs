@@ -54,9 +54,6 @@ pub enum ResultOp {
     AssignLocal(intermediate::Expression, intermediate::Expression),
     AssignParam(intermediate::Expression, intermediate::Expression),
     AssignHelperVar(usize, intermediate::Expression),
-    CallE(intermediate::Value, intermediate::Value, Vec<intermediate::Expression>),
-    Call(intermediate::Value, Vec<intermediate::Expression>),
-    KCall(intermediate::Value, Vec<intermediate::Expression>),
     Send(intermediate::Expression, intermediate::Expression, Vec<intermediate::Expression>),
     Incomplete(String),
     Return(intermediate::Expression),
@@ -150,6 +147,9 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
             let a = expr_to_value(state, a);
             apply_unary_op(op, a)
         },
+        intermediate::Expression::Call(..) => { None },
+        intermediate::Expression::CallE(..) => { None },
+        intermediate::Expression::KCall(..) => { None },
         _ => { todo!("expr_to_value: {:?}", expr); }
     }
 }
@@ -208,6 +208,9 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Class(_) => { return expr.clone(); },
         intermediate::Expression::Undefined => { return expr.clone(); },
         intermediate::Expression::Rest(..) => { return expr.clone(); },
+        intermediate::Expression::Call(..) => { return expr.clone(); },
+        intermediate::Expression::CallE(..) => { return expr.clone(); },
+        intermediate::Expression::KCall(..) => { return expr.clone(); },
     }
 }
 
@@ -293,15 +296,6 @@ impl<'a> VM<'a> {
                 let expr = simplify_expr(&mut self.state, expr);
                 self.ops.push(ResultOp::Return(expr));
             },
-            intermediate::IntermediateCode::CallE(script, disp_index, params) => {
-                self.ops.push(ResultOp::CallE(*script, *disp_index, params.clone()));
-            },
-            intermediate::IntermediateCode::Call(addr, params) => {
-                self.ops.push(ResultOp::Call(*addr, params.clone()));
-            },
-            intermediate::IntermediateCode::KCall(func, params) => {
-                self.ops.push(ResultOp::KCall(*func, params.clone()));
-            },
             intermediate::IntermediateCode::Send(expr, values) => {
                 let expr = simplify_expr(&mut self.state, &expr);
 
@@ -329,6 +323,8 @@ impl<'a> VM<'a> {
                                     intermediate::Operand::SelectorValue(Box::new(expr.clone()), selector_value));
                             } else {
                                 if self.class_definitions.is_certainly_func(selector_value) {
+                                    let msg = format!("TODO: migrate result function of selector {} to helper variable", selector_value);
+                                    self.ops.push(ResultOp::Incomplete(msg));
                                     self.state.acc = intermediate::Expression::Operand(intermediate::Operand::CallResult);
                                 }
                                 let selector_expr = intermediate::Expression::Operand(intermediate::Operand::Imm(selector_value));

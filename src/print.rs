@@ -41,8 +41,8 @@ impl<'a> Formatter<'a> {
             intermediate::Operand::Acc => { "acc".to_string() },
             intermediate::Operand::Prev => { "prev".to_string() },
             intermediate::Operand::OpSelf => { "self".to_string() },
-            intermediate::Operand::Tmp => { "tmp".to_string() }
-            intermediate::Operand::CallResult => { "callResult".to_string() }
+            intermediate::Operand::Tmp => { "tmp".to_string() },
+            intermediate::Operand::CallResult => { "callResult".to_string() },
         }
     }
 
@@ -92,6 +92,18 @@ impl<'a> Formatter<'a> {
             },
             intermediate::Expression::Class(val) => {
                 format!("class({})", val)
+            },
+            intermediate::Expression::CallE(script_num, disp_index, params) => {
+                let params = self.format_expression_vec(params);
+                format!("callE({}, {}, {})", script_num, disp_index, params)
+            },
+            intermediate::Expression::Call(offset, params) => {
+                let params = self.format_expression_vec(params);
+                let offset = self.get_label(*offset);
+                format!("{}({})", offset, params)
+            },
+            intermediate::Expression::KCall(num, params) => {
+                self.format_kcall(*num, params)
             },
         }
     }
@@ -194,18 +206,6 @@ impl<'a> Formatter<'a> {
             execute::ResultOp::AssignHelperVar(n, expr) => {
                 let expr = self.format_expression(expr);
                 format!("v{} = {}", n, expr)
-            },
-            execute::ResultOp::CallE(script_num, disp_index, params) => {
-                let params = self.format_expression_vec(params);
-                format!("callE({}, {}, {})", script_num, disp_index, params)
-            },
-            execute::ResultOp::Call(offset, params) => {
-                let params = self.format_expression_vec(params);
-                let offset = self.get_label(*offset);
-                format!("{}({})", offset, params)
-            },
-            execute::ResultOp::KCall(num, params) => {
-                self.format_kcall(*num, params)
             },
             execute::ResultOp::Send(dest, selector, params) => {
                 let dest = self.format_expression(dest);

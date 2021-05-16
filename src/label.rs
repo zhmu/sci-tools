@@ -12,9 +12,14 @@ fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
         let ii = translator.convert(&ins);
         let ic = ii.ops.last().unwrap();
         match ic {
-            intermediate::IntermediateCode::Call(addr, _) => {
-                let label = format!("local_{:x}", addr);
-                labels.insert(*addr, label);
+            intermediate::IntermediateCode::Assign(_, expr) => {
+                match expr {
+                    intermediate::Expression::Call(addr, _) => {
+                        let label = format!("local_{:x}", addr);
+                        labels.insert(*addr, label);
+                    },
+                    _ => { },
+                }
             },
             intermediate::IntermediateCode::BranchAlways(addr) |
             intermediate::IntermediateCode::Branch{ taken_offset: addr, next_offset: _, cond: _ } => {

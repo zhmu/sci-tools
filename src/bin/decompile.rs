@@ -449,11 +449,11 @@ fn main() -> Result<(), ScriptError> {
         match block.r#type {
             script::BlockType::Code => {
                 println!("> Processing code block at offset {:x}", block.base);
-                let code_blocks = split::split_code_in_blocks(&block, &labels);
-                let mut graph = code::create_graph_from_codeblocks(&code_blocks);
+                let split_result = split::split_code_in_blocks(&block, &labels);
+                let mut graph = code::create_graph_from_codeblocks(&split_result.blocks);
 
                 println!("> Performing flow analysis...");
-                flow::analyse_inout(&mut graph, &class_definitions);
+                flow::analyse_inout(&mut graph, &class_definitions, split_result.helpervar_index);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;

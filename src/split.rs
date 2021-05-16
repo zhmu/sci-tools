@@ -50,7 +50,12 @@ fn split_instructions_from_block(block: &mut code::CodeBlock, offset: intermedia
     unreachable!();
 }
 
-pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &label::LabelMap) -> Vec<code::CodeBlock<'a>> {
+pub struct SplitResult<'a> {
+    pub blocks: Vec<code::CodeBlock<'a>>,
+    pub helpervar_index: usize,
+}
+
+pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &label::LabelMap) -> SplitResult<'a> {
     let mut blocks: Vec<code::CodeBlock> = Vec::new();
     let disasm = disassemble::Disassembler::new(&script_block, 0);
     let mut block_offsets: HashSet<intermediate::Offset> = HashSet::new();
@@ -121,6 +126,6 @@ pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &
        fill_out_index(&mut block.branch_index_false, &offset_to_index);
     }
 
-    blocks
+    SplitResult{ blocks, helpervar_index: translator.get_helpervar_index() }
 }
 

@@ -54,12 +54,23 @@ pub struct Translator
     stack_index: usize,
     stack_indexes: VecDeque<usize>,
     rest: FrameSize,
+    helpervar_index: usize,
 }
 
 impl Translator
 {
     pub fn new() -> Self {
-        Translator{ stack_index: 0, rest: 0, stack_indexes: VecDeque::new() }
+        Translator{ stack_index: 0, rest: 0, stack_indexes: VecDeque::new(), helpervar_index: 0 }
+    }
+
+    pub fn get_helpervar_index(&self) -> usize {
+        self.helpervar_index
+    }
+
+    fn allocate_helpervar(&mut self) -> Operand {
+        let index = self.helpervar_index;
+        self.helpervar_index += 1;
+        Operand::HelperVariable(index)
     }
 
     fn do_push(&mut self, expr: Expression) -> Vec<IntermediateCode> {
@@ -207,17 +218,19 @@ impl Translator
                 let frame_size: FrameSize = ins.args[1];
 
                 let args = self.collect_arguments(frame_size + 2);
-                result.push(IntermediateCode::Call(addr, args));
-                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
+                let var = self.allocate_helpervar();
+                result.push(IntermediateCode::Assign(var.clone(), Expression::Call(addr, args)));
+                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(var)));
             },
             0x42 | 0x43 => { // kcall
                 let nr = ins.args[0];
                 let frame_size: FrameSize = ins.args[1];
 
                 let args = self.collect_arguments(frame_size + 2);
-                result.push(IntermediateCode::KCall(nr, args));
+                let var = self.allocate_helpervar();
+                result.push(IntermediateCode::Assign(var.clone(), Expression::KCall(nr, args)));
                 if !sci::does_kcall_return_void(nr) {
-                    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
+                    result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(var)));
                 }
             },
             0x44 | 0x45 => { // callb
@@ -226,7 +239,9 @@ impl Translator
                 let frame_size: FrameSize = ins.args[1];
 
                 let args = self.collect_arguments(frame_size + 2);
-                result.push(IntermediateCode::CallE(script, disp_index, args));
+                let var = self.allocate_helpervar();
+                result.push(IntermediateCode::Assign(var.clone(), Expression::CallE(script, disp_index, args)));
+                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(var)));
             },
             0x46 | 0x47 => { // calle
                 let script: ScriptID = ins.args[0];
@@ -234,8 +249,9 @@ impl Translator
                 let frame_size: FrameSize = ins.args[2];
 
                 let args = self.collect_arguments(frame_size + 2);
-                result.push(IntermediateCode::CallE(script, disp_index, args));
-                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(Operand::CallResult)));
+                let var = self.allocate_helpervar();
+                result.push(IntermediateCode::Assign(var.clone(), Expression::CallE(script, disp_index, args)));
+                result.push(IntermediateCode::Assign(Operand::Acc, Expression::Operand(var)));
             },
             0x48 | 0x49 => { // ret
                 result.push(IntermediateCode::Return(expr_acc()));

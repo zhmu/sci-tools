@@ -1,4 +1,4 @@
-use crate::{intermediate, code, execute, sci, class_defs};
+use crate::{intermediate, code, execute, class_defs};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -37,6 +37,9 @@ fn find_regs_in_expr2(state: &execute::VMState, expr: &intermediate::Expression,
         intermediate::Expression::Class(_) => { },
         intermediate::Expression::Undefined => { },
         intermediate::Expression::Rest(..) => { },
+        intermediate::Expression::KCall(..) => { },
+        intermediate::Expression::CallE(..) => { },
+        intermediate::Expression::Call(..) => { },
     }
 }
 
@@ -92,15 +95,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                     process_expr_to_input_regs(&vm.state, cond, &mut inputs, &outputs);
                 },
                 intermediate::IntermediateCode::BranchAlways(_) => { },
-                intermediate::IntermediateCode::Call(_, _) | intermediate::IntermediateCode::CallE(_, _, _) => {
-                    // For now, let's assume that calls always change the accumulator
-                    outputs.insert(UsedRegister::Acc);
-                },
-                intermediate::IntermediateCode::KCall(nr, _) => {
-                    if !sci::does_kcall_return_void(*nr) {
-                        outputs.insert(UsedRegister::Acc);
-                    }
-                },
                 intermediate::IntermediateCode::Return(..) => { },
                 intermediate::IntermediateCode::Send(_, values) => {
                     let mut n: usize = 0;
@@ -198,7 +192,7 @@ fn map_usedregister_to_op(reg: UsedRegister) -> intermediate::Operand {
     }
 }
 
-pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions) {
+pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions, helpervar_first_index: usize) {
     let mut result: HashMap<NodeIndex, InOut> = HashMap::new();
 
     for n in graph.node_indices() {
@@ -215,7 +209,7 @@ pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs
         }).expect("could not write debug flow graph");
     }
 
-    let mut var_index: usize = 1;
+    let mut var_index: usize = helpervar_first_index;
     for n in graph.node_indices() {
         let n_in_out = &result[&n];
         if n_in_out.inputs.is_empty() { continue; }

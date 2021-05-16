@@ -67,6 +67,9 @@ pub enum Expression {
     Unary(UnaryOp, Box<Expression>),
     Address(Box<Expression>),
     Class(Register),
+    Call(Offset, Vec<Expression>),
+    KCall(Register, Vec<Expression>),
+    CallE(ScriptID, Register, Vec<Expression>),
 }
 
 #[derive(Debug,Clone)]
@@ -75,9 +78,6 @@ pub enum IntermediateCode {
     Push(usize, Expression),
     Branch{ taken_offset: Offset, next_offset: Offset, cond: Expression },
     BranchAlways(Offset),
-    Call(Offset, Vec<Expression>),
-    KCall(Register, Vec<Expression>),
-    CallE(ScriptID, Register, Vec<Expression>),
     Return(Expression),
     Send(Expression, Vec<Expression>),
 }
