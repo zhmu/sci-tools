@@ -32,12 +32,15 @@ fn is_conditional_branch(ii: &intermediate::Instruction) -> Option<(intermediate
 }
 
 fn must_split(ii: &intermediate::Instruction) -> bool {
-    let ic = ii.ops.last().unwrap();
-    match ic {
-        intermediate::IntermediateCode::BranchAlways(_) => { true },
-        intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
-        intermediate::IntermediateCode::Return(..) => { true },
-        _ => { false }
+    if let Some(ic) = ii.ops.last() {
+        return match ic {
+            intermediate::IntermediateCode::BranchAlways(_) => { true },
+            intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
+            intermediate::IntermediateCode::Return(..) => { true },
+            _ => { false }
+        };
+    } else {
+        return false;
     }
 }
 

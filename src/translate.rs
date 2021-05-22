@@ -208,10 +208,9 @@ impl Translator
                 result.append(&mut self.do_push(expr_tmp()));
             },
             0x3e | 0x3f => { // link
-                let amount: Register = ins.args[0];
-                for _ in 0..amount {
-                    result.append(&mut self.do_push(Expression::Undefined));
-                }
+                // This is used to reserve space for temporary variables; we
+                // ignore it for now
+                let _amount: Register = ins.args[0];
             },
             0x40 | 0x41 => { // call
                 let addr = script::relpos0_to_absolute_offset(&ins);

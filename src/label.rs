@@ -10,6 +10,7 @@ fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
     let disasm = disassemble::Disassembler::new(&block, 0);
     for ins in disasm {
         let ii = translator.convert(&ins);
+        if ii.ops.is_empty() { continue; }
         let ic = ii.ops.last().unwrap();
         match ic {
             intermediate::IntermediateCode::Assign(_, expr) => {
