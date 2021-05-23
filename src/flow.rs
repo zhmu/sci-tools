@@ -62,7 +62,7 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
     let mut inputs: HashSet<UsedRegister> = HashSet::new();
     let mut outputs: HashSet<UsedRegister> = HashSet::new();
 
-    let mut vm = execute::VM::new(&execute::VMState::new(), class_definitions);
+    let mut vm = execute::VM::new(&execute::VMState::new());
 
     for ins in &frag.instructions {
         for op in &ins.ops {
@@ -255,7 +255,7 @@ fn analyse_send2(graph: &code::CodeGraph, nodes_seen: &mut HashSet<NodeIndex>, n
     nodes_seen.insert(n);
 
     if DEBUG_FLOW { println!("analyse_send2: node {:?}", n); }
-    let mut vm = execute::VM::new(&vmstate, class_definitions);
+    let mut vm = execute::VM::new(&vmstate);
 
     let node = &graph[n];
     let frag = get_frag_from_ops(node).unwrap();

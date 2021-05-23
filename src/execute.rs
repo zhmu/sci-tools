@@ -1,4 +1,4 @@
-use crate::{intermediate, class_defs};
+use crate::intermediate;
 
 use std::fmt;
 use std::collections::HashSet;
@@ -65,11 +65,10 @@ pub enum BranchIf {
     Condition(intermediate::Expression),
 }
 
-pub struct VM<'a> {
+pub struct VM {
     pub ops: Vec<ResultOp>,
     pub branch: BranchIf,
     pub state: VMState,
-    class_definitions: &'a class_defs::ClassDefinitions
 }
 
 #[derive(PartialEq,Eq,Hash)]
@@ -229,9 +228,9 @@ pub fn simplify_expr(state: &mut VMState, expr: &intermediate::Expression) -> in
     simplify_expr2(state, &mut HashSet::new(), expr.clone())
 }
 
-impl<'a> VM<'a> {
-    pub fn new(state: &VMState, class_definitions: &'a class_defs::ClassDefinitions) -> Self {
-        VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone(), class_definitions }
+impl VM {
+    pub fn new(state: &VMState) -> Self {
+        VM{ ops: Vec::new(), branch: BranchIf::Never, state: state.clone() }
     }
 
     pub fn execute(&mut self, ic: &intermediate::IntermediateCode) {
@@ -308,51 +307,17 @@ impl<'a> VM<'a> {
                 self.ops.push(ResultOp::Return(expr));
             },
             intermediate::IntermediateCode::Send(expr, values) => {
-                let expr = simplify_expr(&mut self.state, &expr);
-
-                let mut n: usize = 0;
-                while n < values.len() {
-                    let selector = &values[n];
-                    n += 1;
-                    if n >= values.len() {
-                        let msg = format!("out of arguments");
-                        self.ops.push(ResultOp::Incomplete(msg));
-                        break;
-                    }
-                    if let Some(num_values) = expr_to_value(&self.state, &values[n]) {
-                        let num_values = num_values as usize;
-                        n += 1;
-                        let mut args: Vec<intermediate::Expression> = Vec::new();
-                        for m in 0..num_values {
-                            let expr = simplify_expr(&mut self.state, &values[n + m]);
-                            args.push(expr);
-                        }
-
-                        if let Some(selector_value) = expr_to_value(&self.state, &selector) {
-                            if num_values == 0 && self.class_definitions.is_certainly_propery(selector_value) {
-                                self.state.acc = intermediate::Expression::Operand(
-                                    intermediate::Operand::SelectorValue(Box::new(expr.clone()), selector_value));
-                            } else {
-                                if self.class_definitions.is_certainly_func(selector_value) {
-                                    let msg = format!("TODO: migrate result function of selector {} to helper variable", selector_value);
-                                    self.ops.push(ResultOp::Incomplete(msg));
-                                    self.state.acc = intermediate::Expression::Operand(intermediate::Operand::CallResult);
-                                }
-                                let selector_expr = intermediate::Expression::Operand(intermediate::Operand::Imm(selector_value));
-                                self.ops.push(ResultOp::Send(expr.clone(), selector_expr, args));
-                            }
-                        } else {
-                            let msg = format!("send: unable to convert selector value {:?} to number", selector);
-                            self.ops.push(ResultOp::Incomplete(msg));
-                            self.ops.push(ResultOp::Send(expr.clone(), selector.clone(), args));
-                        }
-                        n += num_values;
-                    } else {
-                        let msg = format!("could not convert num_values {:?} to number", values[n]);
-                        self.ops.push(ResultOp::Incomplete(msg));
-                        break;
-                    }
+                // We should only get here once flow::analyse_send() could not
+                // figure out which type of send it was, so no need to analyse
+                // more here
+                let selector = simplify_expr(&mut self.state, &values[0]);
+                let mut params: Vec<intermediate::Expression> = Vec::with_capacity(values.len() - 1);
+                for v in 1..values.len() {
+                    let expr = simplify_expr(&mut self.state, &values[v]);
+                    params.push(expr);
                 }
+                let expr = simplify_expr(&mut self.state, &expr);
+                self.ops.push(ResultOp::Send(expr.clone(), selector, params));
             },
             intermediate::IntermediateCode::WriteSelector(expr, selector, value) => {
                 self.ops.push(ResultOp::WriteSelectorValue(expr.clone(), *selector, value.clone()));
