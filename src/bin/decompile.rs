@@ -286,7 +286,7 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
@@ -294,22 +294,41 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, format
         let base = find_offset(&node.ops.first().unwrap());
         let label = formatter.get_label(base);
 
-        writeln!(int_file, "// Block at {:x}", base)?;
-        writeln!(int_file, "{} {{", label)?;
         writeln!(out_file, "// Block at {:x}", base)?;
         writeln!(out_file, "{} {{", label)?;
 
         if graph.edges_directed(n, Outgoing).count() == 0 {
-            writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
+            writeln!(out_file, "{}", format_ops(&node.ops, 1))?;
+        } else {
+            let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
+            writeln!(out_file, "{}", msg)?;
+        }
+
+        writeln!(out_file, "}}\n")?;
+
+    }
+    Ok(())
+}
+
+fn write_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+    for n in graph.node_indices() {
+        let node = &graph[n];
+        if graph.edges_directed(n, Incoming).count() != 0 { continue; }
+
+        let base = find_offset(&node.ops.first().unwrap());
+        let label = formatter.get_label(base);
+
+        writeln!(out_file, "// Block at {:x}", base)?;
+        writeln!(out_file, "{} {{", label)?;
+
+        if graph.edges_directed(n, Outgoing).count() == 0 {
             let mut state = execute::VMState::new();
             writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
-            writeln!(int_file, "{}", msg)?;
             writeln!(out_file, "{}", msg)?;
         }
 
-        writeln!(int_file, "}}\n")?;
         writeln!(out_file, "}}\n")?;
 
     }
@@ -414,6 +433,7 @@ fn main() -> Result<(), ScriptError> {
     let mut labels = label::find_code_labels(&script);
 
     let out_path = "tmp";
+    let mut dbg_file = File::create(format!("{}/{}.debug.txt", out_path, script_id))?;
     let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
     let mut out_file = File::create(format!("{}/{}.txt", out_path, script_id))?;
 
@@ -452,6 +472,9 @@ fn main() -> Result<(), ScriptError> {
                 let split_result = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&split_result.blocks);
 
+                println!("> Writing code...");
+                write_intermediate_code(&mut dbg_file, &formatter, &graph)?;
+
                 println!("> Performing send analysis...");
                 let helpvar_index = flow::analyse_send(&mut graph, &class_definitions, split_result.helpervar_index);
 
@@ -471,7 +494,8 @@ fn main() -> Result<(), ScriptError> {
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
                 println!("> Writing code...");
-                write_code(&mut int_file, &mut out_file, &formatter, &graph)?;
+                write_intermediate_code(&mut int_file, &formatter, &graph)?;
+                write_code(&mut out_file, &formatter, &graph)?;
             },
             _ => { }
         };
