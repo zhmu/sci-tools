@@ -81,7 +81,7 @@ impl<'a> Formatter<'a> {
                     intermediate::BinaryOp::UnsignedLess => { "u<" },
                     intermediate::BinaryOp::UnsignedLessOrEqual => { "u<=" },
                 };
-                format!("{} {} {}", expr1, op, expr2)
+                format!("({} {} {})", expr1, op, expr2)
             },
             intermediate::Expression::Unary(op, expr) => {
                 let expr = self.format_expression(expr);
@@ -89,7 +89,7 @@ impl<'a> Formatter<'a> {
                     intermediate::UnaryOp::Negate => { "-" },
                     intermediate::UnaryOp::LogicNot => { "!" },
                 };
-                format!("{} {}", op, expr)
+                format!("({}{})", op, expr)
             },
             intermediate::Expression::Address(expr) => {
                 let expr = self.format_expression(expr);
