@@ -20,6 +20,7 @@ pub enum Operand {
     Imm(Register),
     HelperVariable(usize),
     SelectorValue(Box<Expression>, Register),
+    InvokeSelector(Box<Expression>, Register, Vec<Expression>),
     Acc,
     Prev,
     OpSelf,
@@ -80,6 +81,7 @@ pub enum IntermediateCode {
     BranchAlways(Offset),
     Return(Expression),
     Send(Expression, Vec<Expression>),
+    WriteSelector(Expression, Register, Expression),
 }
 
 #[derive(Debug,Clone)]

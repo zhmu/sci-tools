@@ -54,6 +54,7 @@ pub enum ResultOp {
     AssignLocal(intermediate::Expression, intermediate::Expression),
     AssignParam(intermediate::Expression, intermediate::Expression),
     AssignHelperVar(usize, intermediate::Expression),
+    WriteSelectorValue(intermediate::Expression, intermediate::Value, intermediate::Expression),
     Send(intermediate::Expression, intermediate::Expression, Vec<intermediate::Expression>),
     Incomplete(String),
     Return(intermediate::Expression),
@@ -135,6 +136,7 @@ pub fn expr_to_value(state: &VMState, expr: &intermediate::Expression) -> Option
         intermediate::Expression::Operand(intermediate::Operand::CallResult) => { None },
         intermediate::Expression::Operand(intermediate::Operand::OpSelf) => { None },
         intermediate::Expression::Operand(intermediate::Operand::SelectorValue(_, _)) => { None },
+        intermediate::Expression::Operand(intermediate::Operand::InvokeSelector(..)) => { None },
         intermediate::Expression::Class(_) => { None },
         intermediate::Expression::Address(_) => { None },
         intermediate::Expression::Undefined => { None },
@@ -191,6 +193,15 @@ fn simplify_expr2(state: &mut VMState, state_seen: &mut HashSet<StateEnum>, expr
         intermediate::Expression::Operand(intermediate::Operand::SelectorValue(expr, nr)) => {
             let expr = simplify_expr2(state, state_seen, *expr);
             return intermediate::Expression::Operand(intermediate::Operand::SelectorValue(Box::new(expr), nr));
+        },
+        intermediate::Expression::Operand(intermediate::Operand::InvokeSelector(expr, nr, args)) => {
+            let expr = simplify_expr2(state, state_seen, *expr);
+            let mut new_args: Vec<intermediate::Expression> = Vec::new();
+            for arg in args {
+                let arg = simplify_expr2(state, state_seen, arg);
+                new_args.push(arg);
+            }
+            return intermediate::Expression::Operand(intermediate::Operand::InvokeSelector(Box::new(expr), nr, new_args));
         },
         intermediate::Expression::Binary(op, a, b) => {
             let a = simplify_expr2(state, state_seen, *a);
@@ -342,7 +353,10 @@ impl<'a> VM<'a> {
                         break;
                     }
                 }
-            }
+            },
+            intermediate::IntermediateCode::WriteSelector(expr, selector, value) => {
+                self.ops.push(ResultOp::WriteSelectorValue(expr.clone(), *selector, value.clone()));
+            },
         }
     }
 }

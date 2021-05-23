@@ -2,7 +2,7 @@ use crate::{intermediate, code, execute, class_defs};
 
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use petgraph::Incoming;
+use petgraph::{Incoming, Outgoing};
 
 use std::collections::{HashSet, HashMap};
 
@@ -77,16 +77,6 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                         intermediate::Operand::Acc => {
                             outputs.insert(UsedRegister::Acc);
                         },
-                        //intermediate::Operand::Sp => { },
-/*
-                        intermediate::Operand::Tos => {
-                            if let Some(sp) = execute::expr_to_value(&vm.state, &vm.state.sp) {
-                                outputs.insert(UsedRegister::Stack(sp));
-                            } else {
-                                panic!("cannot resolve sp value for tos");
-                            }
-                        },
-*/
                         _ => { }
                     }
                 },
@@ -96,6 +86,7 @@ fn analyse_instructions(frag: &code::CodeFragment, class_definitions: &class_def
                 },
                 intermediate::IntermediateCode::BranchAlways(_) => { },
                 intermediate::IntermediateCode::Return(..) => { },
+                intermediate::IntermediateCode::WriteSelector(..) => { },
                 intermediate::IntermediateCode::Send(_, values) => {
                     let mut n: usize = 0;
                     while n + 1 < values.len() {
@@ -192,7 +183,7 @@ fn map_usedregister_to_op(reg: UsedRegister) -> intermediate::Operand {
     }
 }
 
-pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions, helpervar_first_index: usize) {
+pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions, helpervar_first_index: usize) -> usize {
     let mut result: HashMap<NodeIndex, InOut> = HashMap::new();
 
     for n in graph.node_indices() {
@@ -246,4 +237,130 @@ pub fn analyse_inout(graph: &mut code::CodeGraph, class_definitions: &class_defs
 
         var_index += 1;
     }
+    var_index
+}
+
+fn get_frag_from_ops<'a>(node: &'a code::CodeNode) -> Option<&'a code::CodeFragment> {
+    assert_eq!(node.ops.len(), 1);
+
+    let op = node.ops.first().unwrap();
+    if let code::Operation::Execute(frag) = op {
+        return Some(frag);
+    }
+    None
+}
+
+fn analyse_send2(graph: &code::CodeGraph, nodes_seen: &mut HashSet<NodeIndex>, n: NodeIndex, class_definitions: &class_defs::ClassDefinitions, var_index: &mut usize, new_node_ops: &mut Vec<(NodeIndex, Vec<Vec<intermediate::IntermediateCode>>)>, vmstate: execute::VMState) {
+    if nodes_seen.contains(&n) { return; }
+    nodes_seen.insert(n);
+
+    if DEBUG_FLOW { println!("analyse_send2: node {:?}", n); }
+    let mut vm = execute::VM::new(&vmstate, class_definitions);
+
+    let node = &graph[n];
+    let frag = get_frag_from_ops(node).unwrap();
+    let mut new_ins_ops: Vec<Vec<intermediate::IntermediateCode>> = Vec::new();
+    for ins in &frag.instructions {
+        let mut new_ops: Vec<intermediate::IntermediateCode> = Vec::new();
+        for op in &ins.ops {
+            if DEBUG_FLOW { println!(">> op {:?} state {}", op, vm.state); }
+            vm.execute(&op);
+            if DEBUG_FLOW { println!(">> post op state {}", vm.state); }
+
+            if let intermediate::IntermediateCode::Send(expr, values) = op {
+                let mut last_helper_used: Option<usize> = None;
+
+                let mut n: usize = 0;
+                while n + 1 < values.len() {
+                    let selector = &values[n];
+                    n += 1;
+                    let num_values = &values[n];
+                    n += 1;
+                    if let Some(num_values) = execute::expr_to_value(&vm.state, &num_values) {
+                        let num_values = num_values as usize;
+                        if let Some(selector) = execute::expr_to_value(&vm.state, &selector) {
+                            let args = &values[n..n+num_values];
+                            n += num_values;
+                            if class_definitions.is_certainly_propery(selector) {
+                                if num_values == 0 {
+                                    new_ops.push(intermediate::IntermediateCode::Assign(
+                                        intermediate::Operand::HelperVariable(*var_index),
+                                        intermediate::Expression::Operand(intermediate::Operand::SelectorValue(Box::new(expr.clone()), selector)))
+                                    );
+                                    last_helper_used = Some(*var_index);
+                                    *var_index += 1;
+                                } else if num_values == 1 {
+                                    new_ops.push(intermediate::IntermediateCode::WriteSelector(expr.clone(), selector, args.first().unwrap().clone()));
+                                } else {
+                                    panic!("multiple values in WRITE {:?} {} {:?}", expr, selector, args);
+                                }
+                            } else if class_definitions.is_certainly_func(selector) {
+                                new_ops.push(intermediate::IntermediateCode::Assign(
+                                    intermediate::Operand::HelperVariable(*var_index),
+                                    intermediate::Expression::Operand(
+                                        intermediate::Operand::InvokeSelector(Box::new(expr.clone()), selector, args.to_vec()))
+                                    )
+                                );
+                                last_helper_used = Some(*var_index);
+                                *var_index += 1;
+                            } else {
+                                // We do not know what this is; better leave it as-is
+                                println!("encountered UNKNOWN send {:?} {} {:?}", expr, selector, args);
+                                let mut send_values: Vec<intermediate::Expression> = Vec::with_capacity(num_values + 2);
+                                for m in n - num_values - 2..n {
+                                    send_values.push(values[m].clone());
+                                }
+                                new_ops.push(intermediate::IntermediateCode::Send(expr.clone(), send_values));
+                            }
+                        } else {
+                            panic!("couldn't resolve selector value in send call {:?}", selector);
+                        }
+                    } else {
+                        panic!("couldn't resolve num values in send call {:?}", num_values);
+                    }
+                }
+
+                if let Some(n) = last_helper_used {
+                    new_ops.push(intermediate::IntermediateCode::Assign(intermediate::Operand::Acc, intermediate::Expression::Operand(intermediate::Operand::HelperVariable(n))));
+                }
+            } else {
+                new_ops.push(op.clone());
+            }
+        }
+        new_ins_ops.push(new_ops);
+    }
+    new_node_ops.push((n, new_ins_ops));
+
+    for m in graph.edges_directed(n, Outgoing) {
+        let state = vm.state.clone();
+        analyse_send2(graph, nodes_seen, m.target(), class_definitions, var_index, new_node_ops, state);
+    }
+}
+
+pub fn analyse_send(graph: &mut code::CodeGraph, class_definitions: &class_defs::ClassDefinitions, helpervar_first_index: usize) -> usize {
+    let mut nodes_seen: HashSet<NodeIndex> = HashSet::new();
+    let mut var_index: usize = helpervar_first_index;
+
+    let mut new_node_ops: Vec<(NodeIndex, Vec<Vec<intermediate::IntermediateCode>>)> = Vec::new();
+    for n in graph.node_indices() {
+        if graph.edges_directed(n, Incoming).count() != 0 { continue; }
+
+        analyse_send2(graph, &mut nodes_seen, n, class_definitions, &mut var_index, &mut new_node_ops, execute::VMState::new());
+    }
+
+    for (n, new_ops) in new_node_ops {
+        let node = &mut graph[n];
+        assert_eq!(node.ops.len(), 1);
+        let op = node.ops.first_mut().unwrap();
+        if let code::Operation::Execute(frag) = op {
+            assert_eq!(frag.instructions.len(), new_ops.len());
+
+            for m in 0..new_ops.len() {
+                frag.instructions[m].ops = new_ops[m].clone();
+            }
+        } else {
+            unreachable!();
+        }
+    }
+    var_index
 }

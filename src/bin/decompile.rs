@@ -452,8 +452,11 @@ fn main() -> Result<(), ScriptError> {
                 let split_result = split::split_code_in_blocks(&block, &labels);
                 let mut graph = code::create_graph_from_codeblocks(&split_result.blocks);
 
+                println!("> Performing send analysis...");
+                let helpvar_index = flow::analyse_send(&mut graph, &class_definitions, split_result.helpervar_index);
+
                 println!("> Performing flow analysis...");
-                flow::analyse_inout(&mut graph, &class_definitions, split_result.helpervar_index);
+                let _helpervar_index = flow::analyse_inout(&mut graph, &class_definitions, helpvar_index);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;

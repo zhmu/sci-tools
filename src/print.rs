@@ -38,6 +38,12 @@ impl<'a> Formatter<'a> {
                 let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
                 format!("{}.{}", expr, selector)
             },
+            intermediate::Operand::InvokeSelector(expr, selector_nr, params) => {
+                let expr = self.format_expression(expr);
+                let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
+                let params = self.format_expression_vec(params);
+                format!("{}.{}({})", expr, selector, params)
+            },
             intermediate::Operand::Acc => { "acc".to_string() },
             intermediate::Operand::Prev => { "prev".to_string() },
             intermediate::Operand::OpSelf => { "self".to_string() },
@@ -230,6 +236,12 @@ impl<'a> Formatter<'a> {
                     let params = self.format_expression_vec(params);
                     format!("send({}, {}, {}) // cannot determine selector", dest, selector, params)
                 }
+            },
+            execute::ResultOp::WriteSelectorValue(expr, selector, value) => {
+                let expr = self.format_expression(expr);
+                let selector = self.sel_vocab.get_selector_name((*selector).into()).to_string();
+                let value = self.format_expression(value);
+                format!("{}.{} = {}", expr, selector, value)
             },
             execute::ResultOp::Incomplete(msg) => {
                 format!("incomplete!({})", msg)
