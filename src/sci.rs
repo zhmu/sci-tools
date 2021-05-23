@@ -195,7 +195,7 @@ static KERNEL_CALLS: [KCall; 114] = [
     /* 0x3f */ KCall{ name: "DeleteKey", rtype: ReturnType::Void, arg: &[
                         Arg{ name: "list", atype: ArgType::DblList, optional: false },
                         Arg{ name: "key", atype: ArgType::Word, optional: false } ] },
-    /* 0x40 */ KCall{ name: "Random", rtype: ReturnType::Void, arg: &[
+    /* 0x40 */ KCall{ name: "Random", rtype: ReturnType::Word, arg: &[
                         Arg{ name: "min", atype: ArgType::Word, optional: false },
                         Arg{ name: "max", atype: ArgType::Word, optional: false } ] },
     /* 0x41 */ KCall{ name: "Abs", rtype: ReturnType::Word, arg: &[
