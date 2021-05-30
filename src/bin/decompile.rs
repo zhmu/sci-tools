@@ -9,7 +9,7 @@ use std::convert::TryInto;
 
 use petgraph::graph::NodeIndex;
 use petgraph::algo::kosaraju_scc;
-use petgraph::visit::Dfs;
+use petgraph::visit::{Dfs, EdgeRef};
 use petgraph::{Incoming, Outgoing};
 
 const DEBUG_VM: bool = false;
@@ -136,7 +136,9 @@ fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatt
         result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
-        execute::BranchIf::Condition(_) => { unreachable!() },
+        execute::BranchIf::Condition(expr) => {
+            result += format!("{}todo!(\"got condition node here: \"{}\")\n", indent, formatter.format_expression(&expr)).as_str();
+        },
         execute::BranchIf::Never => { }
     }
     result
@@ -287,6 +289,26 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
+fn determine_reachable_nodes_from(graph: &code::CodeGraph, start_node: NodeIndex) -> Vec<NodeIndex> {
+    let mut nodes: Vec<(NodeIndex, Vec<code::CodeInterval>)> = Vec::new();
+    let mut dfs = Dfs::new(&graph, start_node);
+    while let Some(nx) = dfs.next(&graph) {
+        let node = &graph[nx];
+        let offsets = code::get_node_offsets(&node);
+        nodes.push((nx, offsets));
+    }
+
+    // Sort all reachable nodes by offset; this helps keeping the flow somewhat
+    // understandable and consistent
+    nodes.sort_by(|a, b| a.1.first().unwrap().start.cmp(&b.1.first().unwrap().start) );
+
+    let mut result: Vec<NodeIndex> = Vec::new();
+    for (n, _) in nodes {
+        result.push(n);
+    }
+    result
+}
+
 fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
@@ -304,26 +326,11 @@ fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Form
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(out_file, "{}", msg)?;
 
-            let mut nodes: Vec<(NodeIndex, Vec<code::CodeInterval>)> = Vec::new();
-            let mut dfs = Dfs::new(&graph, n);
-            while let Some(nx) = dfs.next(&graph) {
-                let node = &graph[nx];
-                let offsets = code::get_node_offsets(&node);
-                nodes.push((nx, offsets));
-            }
-
-            // Sort all reachable nodes by offset; this helps keeping the flow somewhat
-            // understandable and consistent
-            nodes.sort_by(|a, b| a.1.first().unwrap().start.cmp(&b.1.first().unwrap().start) );
-
-            for (n, _) in nodes {
+            let nodes = determine_reachable_nodes_from(graph, n);
+            for n in nodes {
                 let node = &graph[n];
                 let offsets = code::get_node_offsets(&node);
-                if offsets.len() == 1 {
-                    writeln!(out_file, "offset_{}:", offsets[0].start)?;
-                } else {
-                    writeln!(out_file, "offsets_{:?}:", offsets)?;
-                }
+                writeln!(out_file, "{}:", format_offsets(&offsets))?;
                 writeln!(out_file, "{}", format_ops(&node.ops, 1))?;
             }
         }
@@ -332,6 +339,14 @@ fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Form
 
     }
     Ok(())
+}
+
+fn format_offsets(offsets: &Vec<code::CodeInterval>) -> String {
+    return if offsets.len() == 1 {
+        format!("offset_{}", offsets[0].start)
+    } else {
+        format!("offsets_{:?}", offsets)
+    }
 }
 
 fn write_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
@@ -351,6 +366,33 @@ fn write_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph:
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(out_file, "{}", msg)?;
+
+            let nodes = determine_reachable_nodes_from(graph, n);
+            for n in nodes {
+                let node = &graph[n];
+                let offsets = code::get_node_offsets(&node);
+                writeln!(out_file, "{}:", format_offsets(&offsets))?;
+                let mut state = execute::VMState::new();
+                writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
+
+                let outgoing: Vec<_> = graph.edges_directed(n, Outgoing).collect();
+                for o in outgoing {
+                    let dest = o.target();
+                    let node = o.weight();
+                    let offsets = code::get_node_offsets(&graph[dest]);
+                    match node.branch {
+                        code::Branch::Always => {
+                            writeln!(out_file, "    always goto {}\n", format_offsets(&offsets))?;
+                        },
+                        code::Branch::True => {
+                            writeln!(out_file, "    on_true goto {}\n", format_offsets(&offsets))?;
+                        },
+                        code::Branch::False => {
+                            writeln!(out_file, "    on_false goto {}\n", format_offsets(&offsets))?;
+                        },
+                    }
+                }
+            }
         }
 
         writeln!(out_file, "}}\n")?;
