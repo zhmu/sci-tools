@@ -9,6 +9,7 @@ use std::convert::TryInto;
 
 use petgraph::graph::NodeIndex;
 use petgraph::algo::kosaraju_scc;
+use petgraph::visit::Dfs;
 use petgraph::{Incoming, Outgoing};
 
 const DEBUG_VM: bool = false;
@@ -302,6 +303,29 @@ fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Form
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
             writeln!(out_file, "{}", msg)?;
+
+            let mut nodes: Vec<(NodeIndex, Vec<code::CodeInterval>)> = Vec::new();
+            let mut dfs = Dfs::new(&graph, n);
+            while let Some(nx) = dfs.next(&graph) {
+                let node = &graph[nx];
+                let offsets = code::get_node_offsets(&node);
+                nodes.push((nx, offsets));
+            }
+
+            // Sort all reachable nodes by offset; this helps keeping the flow somewhat
+            // understandable and consistent
+            nodes.sort_by(|a, b| a.1.first().unwrap().start.cmp(&b.1.first().unwrap().start) );
+
+            for (n, _) in nodes {
+                let node = &graph[n];
+                let offsets = code::get_node_offsets(&node);
+                if offsets.len() == 1 {
+                    writeln!(out_file, "offset_{}:", offsets[0].start)?;
+                } else {
+                    writeln!(out_file, "offsets_{:?}:", offsets)?;
+                }
+                writeln!(out_file, "{}", format_ops(&node.ops, 1))?;
+            }
         }
 
         writeln!(out_file, "}}\n")?;

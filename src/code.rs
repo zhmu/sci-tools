@@ -8,6 +8,40 @@ use std::io::Write;
 
 use crate::{script, intermediate};
 
+#[derive(Debug,Clone)]
+pub struct CodeInterval {
+    pub start: u16,
+    pub end: u16,
+}
+
+impl CodeInterval {
+    pub fn new(start: u16, end: u16) -> Self {
+        CodeInterval{ start, end }
+    }
+
+    fn try_merge(&mut self, other: &CodeInterval) -> bool {
+        if self.end == other.start {
+            self.end = other.end;
+            return true;
+        }
+        false
+    }
+}
+
+pub fn merge_intervals(intervals: &Vec<CodeInterval>) -> Vec<CodeInterval> {
+    let mut sorted_intervals = intervals.to_vec();
+    sorted_intervals.sort_by(|a, b| a.start.cmp(&b.start) );
+
+    let mut result: Vec<CodeInterval> = Vec::new();
+    for interval in sorted_intervals.drain(..) {
+        if let Some(i) = result.last_mut() {
+            if i.try_merge(&interval) { continue; }
+        }
+        result.push(interval);
+    }
+    result
+}
+
 #[derive(Clone,Debug)]
 pub struct CodeFragment {
     pub instructions: Vec<intermediate::Instruction>,
@@ -175,4 +209,24 @@ pub fn plot_graph<F>(fname: &str, graph: &CodeGraph, format_label: F) -> Result<
     Ok(())
 }
 
+fn get_offsets2(ops: &Vec<Operation>, intervals: &mut Vec<CodeInterval>) {
+    for op in ops {
+        match op {
+            Operation::Execute(frag) => {
+                let interval = CodeInterval::new(frag.get_start_offset(), frag.get_end_offset());
+                intervals.push(interval);
+            },
+            Operation::Conditional{ condition, on_true, on_false } => {
+                get_offsets2(condition, intervals);
+                get_offsets2(on_true, intervals);
+                get_offsets2(on_false, intervals);
+            },
+        }
+    }
+}
 
+pub fn get_node_offsets(node: &CodeNode) -> Vec<CodeInterval> {
+    let mut intervals: Vec<CodeInterval> = Vec::new();
+    get_offsets2(&node.ops, &mut intervals);
+    merge_intervals(&intervals)
+}
