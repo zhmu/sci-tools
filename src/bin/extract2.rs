@@ -2,6 +2,7 @@ extern crate scitools;
 
 use num_enum::TryFromPrimitive;
 use std::convert::TryFrom;
+use std::env;
 use phf::phf_map;
 use std::fs::File;
 use std::io::Write;
@@ -43,8 +44,12 @@ static RESOURCE_TYPE_MAP: phf::Map<u8, &'static str> = phf_map!{
 };
 
 fn main() -> Result<(), std::io::Error> {
-    let data_path = "qfg3-data";
-    let out_path = "qfg3-out";
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 3 {
+        panic!("usage: {} data-path out-path", args[0]);
+    }
+    let data_path = &args[1];
+    let out_path = &args[2];
 
     let resource_map_data = std::fs::read(format!("{}/resource.map", data_path))?;
 
