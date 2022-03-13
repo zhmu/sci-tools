@@ -2,10 +2,9 @@ extern crate scitools;
 
 use std::env;
 use packed_struct::prelude::*;
-use byteorder::ReadBytesExt;
-use std::io::{Cursor, Seek, SeekFrom};
 use std::fs::File;
 use gif::{Encoder};
+use scitools::{cel};
 
 #[derive(PackedStruct)]
 #[packed_struct(endian="lsb")]
@@ -35,29 +34,6 @@ pub struct LoopHeader {
     pub step_size: u8,
     pub palette_offset: u32,
     pub cel_offset: u32,
-}
-
-#[derive(PackedStruct)]
-#[packed_struct(endian="lsb")]
-pub struct CelHeader {
-    pub x_dim: u16,
-    pub y_dim: u16,
-    pub x_off: u16,
-    pub y_off: u16,
-    pub skip_color: u8,
-    pub compress_type: u8,
-    pub comp_remap_count: u16,
-    pub compress_size: u32,
-    pub control_size: u32,
-    pub palette_offset: u32,
-    pub data_offset: u32,
-    pub color_offset: u32,
-}
-
-#[derive(PackedStruct)]
-#[packed_struct(endian="lsb")]
-pub struct CelHeader2 {
-    pub compress_remap_offset: u32,
 }
 
 #[derive(Debug)]
@@ -141,53 +117,11 @@ impl View {
             let lop = LoopHeader::unpack_from_slice(&data[loop_offset..loop_offset+16]).unwrap();
             for m in 0..(lop.num_cels as u32) {
                 let cel_offset = ((m * view.cel_header_size as u32) + lop.cel_offset) as usize;
-                let cel = CelHeader::unpack_from_slice(&data[cel_offset..cel_offset+32]).unwrap();
-                let _cel2 = CelHeader2::unpack_from_slice(&data[cel_offset+32..cel_offset+36]).unwrap();
+                let mut cel = cel::Cel::new();
+                cel.load(&data, cel_offset);
 
-                let mut visual = vec![ 0u8; (cel.x_dim * cel.y_dim) as usize ];
-
-                let mut color_offset = cel.color_offset as usize;
-                let mut data_offset = cel.data_offset as usize;
-
-                let mut line = vec![ 0u8; 320 ];
-
-                for y in 0..(cel.y_dim as usize) {
-                    // Decompress line
-                    let mut line_pos: usize = 0;
-                    while line_pos < (cel.x_dim as usize) {
-                        let control = data[data_offset];
-                        data_offset += 1;
-                        if (control & 0x80) == 0 {
-                            for _ in 0..control {
-                                let color = data[color_offset];
-                                color_offset += 1;
-                                line[line_pos] = color;
-                                line_pos += 1;
-                            }
-                        } else /* (control & 0x80) != 0 */ {
-                            let color;
-                            if (control & 0x40) == 0 {
-                                color = data[color_offset];
-                                color_offset += 1;
-                            } else /* (control & 0x40) != 0 */ {
-                                color = cel.skip_color;
-                            }
-                            for _ in 0..(control & 0x3f) {
-                                line[line_pos] = color;
-                                line_pos += 1;
-                            }
-                        }
-                    }
-
-                    // Copy line
-                    for x in 0..(cel.x_dim as usize) {
-                        // TODO remapping
-                        visual[y * cel.x_dim as usize + x] = line[x];
-                    }
-                }
-
-                let mut visual_gif = create_gif(format!("/tmp/{}_{}.gif", n, m).as_str(), cel.x_dim, cel.y_dim);
-                store_gif_bitmap(&mut visual_gif, cel.x_dim, cel.y_dim, &visual);
+                let mut visual_gif = create_gif(format!("/tmp/{}_{}.gif", n, m).as_str(), cel.width, cel.height);
+                store_gif_bitmap(&mut visual_gif, cel.width, cel.height, &cel.visual);
             }
 
         }

@@ -490,9 +490,17 @@ impl Picture {
         println!("pic: n_prio {} cel_count {} vector_offset {}", pic.n_priorities, pic.cel_count, pic.vector_offset);
         if pic.cel_count > 0 {
             let cel_offset = pic2.visual_header_offset as usize;
+            let mut cel = cel::Cel::new();
+            cel.load(&data, cel_offset);
+
             let pen_x = 0;
             let pen_y = 0;
-            cel::draw_cel(&data, cel_offset, pen_x, pen_y, self.visual.as_mut_slice());
+            for y in 0..(cel.height as usize) {
+                for x in 0..(cel.width as usize) {
+                    let pixel = cel.visual[(y * cel.width as usize) + x];
+                    self.visual[(pen_y + y) * SCREEN_WIDTH as usize + pen_x as usize + x] = pixel;
+                }
+            }
         }
 
         let mut res = stream::Streamer::new(&data[pic.vector_offset as usize..], 0);
