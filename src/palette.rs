@@ -1,3 +1,29 @@
+use packed_struct::prelude::*;
+
+#[derive(PackedStruct)]
+#[packed_struct(endian="lsb")]
+pub struct PalHeader {
+    pub hd_size: u8,
+    pub sys_pal_name: [u8; 9],
+    pub pal_count: u8,
+    pub dummy: u16,
+    pub pal_size: u16,
+    pub pal_title: [u8; 9],
+    pub sys_pal_num: u8,
+    pub start_offset: u8,
+    pub n_cycles: u8,
+    pub dummy2: u16,
+    pub n_colors: u16,
+    pub default_flag: u8,
+}
+
+#[derive(PackedStruct)]
+#[packed_struct(endian="lsb")]
+pub struct PalHeader2 {
+    pub typ: u8,
+    pub valid: u32,
+}
+
 fn blend_colors(c1: u8, c2: u8) -> u8 {
     let c1 = c1 as f32;
     let c2 = c2 as f32;
@@ -39,5 +65,26 @@ pub fn fill_ega_colours(palette: &mut [u8; 768]) {
         let g = blend_colors(palette[col1 + 1], palette[col2 + 1]);
         let b = blend_colors(palette[col1 + 2], palette[col2 + 2]);
         set_palette_rgb(palette, n, r, g, b);
+    }
+}
+
+pub fn parse_vga_palette(data: &[u8], palette: &mut [u8; 768]) {
+    let pal = PalHeader::unpack_from_slice(&data[0..32]).unwrap();
+    let pal2 = PalHeader2::unpack_from_slice(&data[32..37]).unwrap();
+
+    let has_flag = pal2.typ == 0;
+    let mut offset: usize = (37 + 4 * pal.n_cycles).into();
+    let mut dest_index: usize = pal.start_offset.into();
+
+    for _ in 0..pal.n_colors {
+        if has_flag {
+            offset += 1;
+        }
+        let r = data[offset + 0];
+        let g = data[offset + 1];
+        let b = data[offset + 2];
+        set_palette_rgb(palette, dest_index, r, g, b);
+        dest_index += 1;
+        offset += 3;
     }
 }

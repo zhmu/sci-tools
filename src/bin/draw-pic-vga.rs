@@ -3,7 +3,7 @@ extern crate log;
 extern crate scitools;
 
 use packed_struct::prelude::*;
-use scitools::stream;
+use scitools::{palette, stream};
 use num_enum::TryFromPrimitive;
 use std::convert::TryFrom;
 use std::env;
@@ -78,21 +78,8 @@ pub struct CelHeader2 {
     pub compress_remap_offset: u32,
 }
 
-
 const SCREEN_HEIGHT: u32 = 200;
 const SCREEN_WIDTH: u32 = 320;
-
-const EGA_PALETTE_COUNT: usize = 4;
-const EGA_PALETTE_SIZE: usize = 40;
-
-fn blend_colors(c1: u8, c2: u8) -> u8 {
-    let c1 = c1 as f32;
-    let c2 = c2 as f32;
-    let t =
-        (c1 / 255.0).powf(2.2 / 1.0) * 255.0 +
-        (c2 / 255.0).powf(2.2 / 1.0) * 255.0;
-    (0.5 + (0.5 * t / 255.0).powf(1.0 / 2.2) * 255.0) as u8
-}
 
 struct Coord {
     x: u32,
@@ -172,12 +159,10 @@ pub struct Picture {
     control: Vec<u8>
 }
 
-fn draw_cel(data: &[u8], cel_offset: usize)
+fn draw_cel(data: &[u8], cel_offset: usize, pen_x: u16, pen_y: u16, visual: &mut [u8])
 {
     let cel = CelHeader::unpack_from_slice(&data[cel_offset..cel_offset+32]).unwrap();
     let _cel2 = CelHeader2::unpack_from_slice(&data[cel_offset+32..cel_offset+36]).unwrap();
-
-    let mut visual = vec![ 0u8; (cel.x_dim * cel.y_dim) as usize ];
 
     let mut color_offset = cel.color_offset as usize;
     let mut data_offset = cel.data_offset as usize;
@@ -214,13 +199,10 @@ fn draw_cel(data: &[u8], cel_offset: usize)
 
         // Copy line
         for x in 0..(cel.x_dim as usize) {
-            // TODO remapping
-            visual[y * cel.x_dim as usize + x] = line[x];
+            // TODO remapping of palette
+            visual[((pen_y as usize + y) * (SCREEN_WIDTH as usize) + (pen_x as usize + x)) as usize] = line[x];
         }
     }
-
-    let mut visual_gif = create_gif("/tmp/pic_cel.gif", cel.x_dim, cel.y_dim);
-    store_gif_bitmap(&mut visual_gif, cel.x_dim, cel.y_dim, &visual);
 }
 
 impl Picture {
@@ -232,18 +214,21 @@ impl Picture {
         Picture{ visual, priority, control }
     }
 
-    pub fn load(&mut self, data: &[u8]) -> Result<(), PictureError> {
-        let mut palette = [ [ 0 as u8; EGA_PALETTE_SIZE ]; EGA_PALETTE_COUNT];
-
+    pub fn load(&mut self, data: &[u8], load_palette: bool, palette: &mut [ u8; 768 ]) -> Result<(), PictureError> {
         let pic = PicHeader::unpack_from_slice(&data[0..32]).unwrap();
         let pic2 = PicHeader2::unpack_from_slice(&data[32..42]).unwrap();
 
+        if load_palette {
+            let pal_data = &data[pic.palette_offset as usize..];
+            palette::parse_vga_palette(&pal_data, palette);
+        }
+
         println!("pic: n_prio {} cel_count {} vector_offset {}", pic.n_priorities, pic.cel_count, pic.vector_offset);
         if pic.cel_count > 0 {
-            //pic.palette_offset
-
             let cel_offset = pic2.visual_header_offset as usize;
-            draw_cel(&data, cel_offset);
+            let pen_x = 0;
+            let pen_y = 0;
+            draw_cel(&data, cel_offset, pen_x, pen_y, self.visual.as_mut_slice());
         }
 
         let mut res = stream::Streamer::new(&data[pic.vector_offset as usize..], 0);
@@ -445,43 +430,9 @@ impl Picture {
     }
 }
 
-fn set_palette_rgb(palette: &mut [u8], index: usize, r: u8, g: u8, b: u8)
-{
-    let index = index * 3;
-    palette[index + 0] = r;
-    palette[index + 1] = g;
-    palette[index + 2] = b;
-}
-
-fn create_gif(fname: &str, width: u16, height: u16) -> gif::Encoder<File> {
-    let mut palette = [ 0u8; 768 ];
-    set_palette_rgb(&mut palette,   0, 0x000, 0x000, 0x000);
-    set_palette_rgb(&mut palette,   1, 0x000, 0x000, 0x0AA);
-    set_palette_rgb(&mut palette,   2, 0x000, 0x0AA, 0x000);
-    set_palette_rgb(&mut palette,   3, 0x000, 0x0AA, 0x0AA);
-    set_palette_rgb(&mut palette,   4, 0x0AA, 0x000, 0x000);
-    set_palette_rgb(&mut palette,   5, 0x0AA, 0x000, 0x0AA);
-    set_palette_rgb(&mut palette,   6, 0x0AA, 0x055, 0x000);
-    set_palette_rgb(&mut palette,   7, 0x0AA, 0x0AA, 0x0AA);
-    set_palette_rgb(&mut palette,   8, 0x055, 0x055, 0x055);
-    set_palette_rgb(&mut palette,   9, 0x055, 0x055, 0x0FF);
-    set_palette_rgb(&mut palette,  10, 0x055, 0x0FF, 0x055);
-    set_palette_rgb(&mut palette,  11, 0x055, 0x0FF, 0x0FF);
-    set_palette_rgb(&mut palette,  12, 0x0FF, 0x055, 0x055);
-    set_palette_rgb(&mut palette,  13, 0x0FF, 0x055, 0x0FF);
-    set_palette_rgb(&mut palette,  14, 0x0FF, 0x0FF, 0x055);
-    set_palette_rgb(&mut palette,  15, 0x0FF, 0x0FF, 0x0FF);
-    for n in 16..256 {
-        let col1: usize = (n % 16) * 3;
-        let col2: usize = (n / 16) * 3;
-        let r = blend_colors(palette[col1 + 0], palette[col2 + 0]);
-        let g = blend_colors(palette[col1 + 1], palette[col2 + 1]);
-        let b = blend_colors(palette[col1 + 2], palette[col2 + 2]);
-        set_palette_rgb(&mut palette, n, r, g, b);
-    }
-
+fn create_gif(fname: &str, width: u16, height: u16, palette: &[ u8; 768 ]) -> gif::Encoder<File> {
     let gif_file = File::create(fname).unwrap();
-    let gif_encoder = Encoder::new(gif_file, width, height, &palette);
+    let gif_encoder = Encoder::new(gif_file, width, height, palette);
     gif_encoder.unwrap()
 }
 
@@ -494,22 +445,32 @@ fn main() -> Result<(), PictureError> {
     env_logger::init();
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        panic!("usage: {} path/pic.num", args[0]);
+    if args.len() != 2 && args.len() != 3 {
+        panic!("usage: {} path/pic.num [path/palette.num]", args[0]);
     }
     let pic_path = &args[1];
     let pic_data = std::fs::read(pic_path)?;
 
+    let mut palette = [ 0u8; 768 ];
+    let mut got_palette = false;
+    if args.len() > 2 {
+        let pal_path = &args[2];
+        let pal_data = std::fs::read(pal_path)?;
+
+        palette::parse_vga_palette(&pal_data, &mut palette);
+        got_palette = true;
+    }
+
     let mut pic = Picture::new();
-    if let Err(x) = pic.load(&pic_data) {
+    if let Err(x) = pic.load(&pic_data, !got_palette, &mut palette) {
         println!("load error: {:?}", x);
     }
 
-    let mut control_gif = create_gif("/tmp/control.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16);
+    let mut control_gif = create_gif("/tmp/control.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &palette);
     store_gif_bitmap(&mut control_gif, SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &pic.control);
-    let mut prio_gif = create_gif("/tmp/prio.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16);
+    let mut prio_gif = create_gif("/tmp/prio.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &palette);
     store_gif_bitmap(&mut prio_gif, SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &pic.priority);
-    let mut vis_gif = create_gif("/tmp/vis.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16);
+    let mut vis_gif = create_gif("/tmp/vis.gif", SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &palette);
     store_gif_bitmap(&mut vis_gif, SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &pic.visual);
 
     Ok(())
