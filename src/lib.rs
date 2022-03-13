@@ -1,6 +1,7 @@
 pub mod stream;
 pub mod decompress;
 pub mod resource;
+pub mod resource2;
 pub mod opcode;
 pub mod script;
 pub mod disassemble;
