@@ -3,12 +3,14 @@ extern crate log;
 
 extern crate scitools;
 
-use scitools::stream;
+use scitools::{palette, stream};
 use num_enum::TryFromPrimitive;
 use std::convert::TryFrom;
-use bmp::{Image, Pixel};
+use std::collections::VecDeque;
 use log::{info, warn};
 use std::env;
+use gif::{Encoder};
+use std::fs::File;
 
 #[derive(Debug)]
 pub enum PictureError {
@@ -26,8 +28,8 @@ impl From<std::io::Error> for PictureError {
     }
 }
 
-const SCREEN_HEIGHT: u32 = 200;
-const SCREEN_WIDTH: u32 = 320;
+const SCREEN_HEIGHT: i32 = 200;
+const SCREEN_WIDTH: i32 = 320;
 
 const DRAW_ENABLE_VISUAL: u32 = 1;
 const DRAW_ENABLE_PRIORITY: u32 = 2;
@@ -40,30 +42,9 @@ const PATTERN_FLAG_USE_PATTERN: u8 = 0x20;
 const EGA_PALETTE_COUNT: usize = 4;
 const EGA_PALETTE_SIZE: usize = 40;
 
-// http://www.shikadi.net/moddingwiki/EGA_Palette
-fn ega_color_to_rgb(color: u8) -> Pixel {
-    match color {
-        0x00 => Pixel{ r: 0x00, g: 0x00, b: 0x00 },
-        0x01 => Pixel{ r: 0x00, g: 0x00, b: 0xaa },
-        0x02 => Pixel{ r: 0x00, g: 0xaa, b: 0x00 },
-        0x03 => Pixel{ r: 0x00, g: 0xaa, b: 0xaa },
-        0x04 => Pixel{ r: 0xaa, g: 0x00, b: 0x00 },
-        0x05 => Pixel{ r: 0xaa, g: 0x00, b: 0xaa },
-        0x06 => Pixel{ r: 0xaa, g: 0x50, b: 0x00 },
-        0x07 => Pixel{ r: 0xaa, g: 0xaa, b: 0xaa },
-        0x08 => Pixel{ r: 0x55, g: 0x55, b: 0x55 },
-        0x09 => Pixel{ r: 0x55, g: 0x55, b: 0xff },
-        0x0a => Pixel{ r: 0x55, g: 0xff, b: 0x55 },
-        0x0b => Pixel{ r: 0x55, g: 0xff, b: 0xff },
-        0x0c => Pixel{ r: 0xff, g: 0x55, b: 0x55 },
-        0x0d => Pixel{ r: 0xff, g: 0x55, b: 0xff },
-        0x0e => Pixel{ r: 0xff, g: 0xff, b: 0x55 },
-        0x0f => Pixel{ r: 0xff, g: 0xff, b: 0xff },
-        _ => Pixel{ r: 0xff, g: 0xc0, b: 0xcb }, // pink
-    }
-}
+const IS_EGA: bool = true;
 
-fn _get_drawing_mask(color: u8, prio: u8, control: u8) -> u32 {
+fn get_drawing_mask(color: u8, prio: u8, control: u8) -> u32 {
     let mut flag = 0;
     if color != 255 {
         flag = flag | DRAW_ENABLE_VISUAL;
@@ -77,38 +58,26 @@ fn _get_drawing_mask(color: u8, prio: u8, control: u8) -> u32 {
     flag
 }
 
-//#[derive(Clone, Copy)]
-//struct PicColor {
-//    col0: u8,
-//    col1: u8
-//}
-
+#[derive(Clone,Copy)]
 struct Coord {
-    x: u32,
-    y: u32
+    x: i32,
+    y: i32
 }
 
 struct Rect {
-    left: u32,
-    top: u32,
-    right: u32,
-    bottom: u32
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32
 }
 
-/*
-const EGA_DEFAULT_PALETTE: [ PicColor; EGA_PALETTE_SIZE ] = [
-    PicColor( 0,  0), PicColor( 1,  1), PicColor( 2,  2), PicColor( 3,  3),
-    PicColor( 4,  4), PicColor( 5,  5), PicColor( 6,  6), PicColor( 7,  7),
-    PicColor( 8,  8), PicColor( 9,  9), PicColor(10, 10), PicColor(11, 11),
-    PicColor(12, 12), PicColor(13, 13), PicColor(14, 14), PicColor( 8,  8),
-    PicColor( 8,  8), PicColor( 0,  1), PicColor( 0,  2), PicColor( 0,  3),
-    PicColor( 0,  4), PicColor( 0,  5), PicColor( 0,  6), PicColor( 8,  8),
-    PicColor( 8,  8), PicColor(15,  9), PicColor(15, 10), PicColor(15, 11),
-    PicColor(15, 12), PicColor(15, 13), PicColor(15, 14), PicColor(15, 15),
-    PicColor( 0,  8), PicColor( 9,  1), PicColor( 2, 10), PicColor( 3, 11),
-    PicColor( 4, 12), PicColor( 5, 13), PicColor( 6, 14), PicColor( 8,  8),
+const EGA_DEFAULT_PALETTE: [ u8; EGA_PALETTE_SIZE ] = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x88,
+    0x88, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x88,
+    0x88, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
+    0x08, 0x91, 0x2a, 0x3b, 0x4c, 0x5d, 0x6e, 0x88
 ];
-*/
 
 const PATTERN_CIRCLES: [ [ u8; 30 ]; 8 ] = [
     [ 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ],
@@ -119,6 +88,33 @@ const PATTERN_CIRCLES: [ [ u8; 30 ]; 8 ] = [
     [ 0x70, 0xc0, 0x1f, 0xfe, 0xe3, 0x3f, 0xff, 0xf7, 0x7f, 0xff, 0xe7, 0x3f, 0xfe, 0xc3, 0x1f, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ],
     [ 0xf0, 0x01, 0xff, 0xe1, 0xff, 0xf8, 0x3f, 0xff, 0xdf, 0xff, 0xf7, 0xff, 0xfd, 0x7f, 0xff, 0x9f, 0xff, 0xe3, 0xff, 0xf0, 0x1f, 0xf0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 ],
     [ 0xe0, 0x03, 0xf8, 0x0f, 0xfc, 0x1f, 0xfe, 0x3f, 0xfe, 0x3f, 0xff, 0x7f, 0xff, 0x7f, 0xff, 0x7f, 0xff, 0x7f, 0xff, 0x7f, 0xfe, 0x3f, 0xfe, 0x3f, 0xfc, 0x1f, 0xf8, 0x0f, 0xe0, 0x03 ]
+
+];
+
+const PATTERN_TEXTURE: [ u8; 32 ] = [
+    0x20, 0x94, 0x02, 0x24, 0x90, 0x82, 0xa4, 0xa2,
+    0x82, 0x09, 0x0a, 0x22, 0x12, 0x10, 0x42, 0x14,
+    0x91, 0x4a, 0x91, 0x11, 0x08, 0x12, 0x25, 0x10,
+    0x22, 0xa8, 0x14, 0x24, 0x00, 0x50, 0x24, 0x04
+];
+
+const PATTERN_OFFSET: [ u8; 128 ] = [
+    0x00, 0x18, 0x30, 0xc4, 0xdc, 0x65, 0xeb, 0x48,
+    0x60, 0xbd, 0x89, 0x05, 0x0a, 0xf4, 0x7d, 0x7d,
+    0x85, 0xb0, 0x8e, 0x95, 0x1f, 0x22, 0x0d, 0xdf,
+    0x2a, 0x78, 0xd5, 0x73, 0x1c, 0xb4, 0x40, 0xa1,
+    0xb9, 0x3c, 0xca, 0x58, 0x92, 0x34, 0xcc, 0xce,
+    0xd7, 0x42, 0x90, 0x0f, 0x8b, 0x7f, 0x32, 0xed,
+    0x5c, 0x9d, 0xc8, 0x99, 0xad, 0x4e, 0x56, 0xa6,
+    0xf7, 0x68, 0xb7, 0x25, 0x82, 0x37, 0x3a, 0x51,
+    0x69, 0x26, 0x38, 0x52, 0x9e, 0x9a, 0x4f, 0xa7,
+    0x43, 0x10, 0x80, 0xee, 0x3d, 0x59, 0x35, 0xcf,
+    0x79, 0x74, 0xb5, 0xa2, 0xb1, 0x96, 0x23, 0xe0,
+    0xbe, 0x05, 0xf5, 0x6e, 0x19, 0xc5, 0x66, 0x49,
+    0xf0, 0xd1, 0x54, 0xa9, 0x70, 0x4b, 0xa4, 0xe2,
+    0xe6, 0xe5, 0xab, 0xe4, 0xd2, 0xaa, 0x4c, 0xe3,
+    0x06, 0x6f, 0xc6, 0x4a, 0xa4, 0x75, 0x97, 0xe1,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
 #[derive(TryFromPrimitive)]
@@ -171,11 +167,10 @@ fn clamp<T: std::cmp::PartialOrd>(val: T, min: T, max: T) -> T {
 
 fn get_abs_coords(res: &mut stream::Streamer) -> Coord {
     let coord_prefix = res.get_byte();
-    let mut x = res.get_byte() as u32;
-    let mut y = res.get_byte() as u32;
-    //info!("get_abs_coords(): x {} y {} prefix {}", x, y, coord_prefix);
-    x = x | ((coord_prefix & 0xf0) as u32) << 4;
-    y = y | ((coord_prefix & 0x0f) as u32) << 8;
+    let mut x = res.get_byte() as i32;
+    let mut y = res.get_byte() as i32;
+    x = x | ((coord_prefix & 0xf0) as i32) << 4;
+    y = y | ((coord_prefix & 0x0f) as i32) << 8;
     Coord{ x, y }
 }
 
@@ -183,134 +178,194 @@ fn get_rel_coords(res: &mut stream::Streamer, base: &Coord) -> Coord {
     let input = res.get_byte();
     let mut x = base.x;
     if (input & 0x80) != 0 {
-        x -= ((input >> 4) & 7) as u32;
+        x -= ((input >> 4) & 7) as i32;
     } else {
-        x += (input >> 4) as u32;
+        x += (input >> 4) as i32;
     }
     let mut y = base.y;
     if (input & 0x08) != 0 {
-        y -= (input & 0x07) as u32;
+        y -= (input & 0x07) as i32;
     } else {
-        y += (input & 0x07) as u32;
+        y += (input & 0x07) as i32;
     }
     Coord{ x, y }
 }
 
+fn get_rel_coords_med(res: &mut stream::Streamer, base: &Coord) -> Coord {
+    let input = res.get_byte();
+    let mut y = base.y;
+    if (input & 0x80) != 0 {
+        y -= (input & 0x7f) as i32;
+    } else {
+        y += input as i32;
+    }
+    let input = res.get_byte();
+    let mut x = base.x;
+    if (input & 0x80) != 0 {
+        x -= (128 - (input & 0x7f)) as i32;
+    } else {
+        x += input as i32;
+    }
+    Coord{ x, y }
+}
+
+fn update_pattern_nr(res: &mut stream::Streamer, pattern_code: u8, pattern_nr: &mut u8)
+{
+    if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
+        let code = res.get_byte();
+        *pattern_nr = (code >> 1) & 0x7f;
+    }
+}
+
+fn swap_i32(a: &mut i32, b: &mut i32) {
+    let t = *b;
+    *b = *a;
+    *a = t;
+}
+
 pub struct Picture {
-    visual: bmp::Image,
-    priority: bmp::Image,
-    control: bmp::Image,
+    visual: Vec<u8>,
+    priority: Vec<u8>,
+    control: Vec<u8>,
+    port_x: i32,
+    port_y: i32
 }
 
 impl Picture {
-    pub fn new() -> Picture {
-        let visual = Image::new(SCREEN_WIDTH, SCREEN_HEIGHT);
-        let priority = Image::new(SCREEN_WIDTH, SCREEN_HEIGHT);
-        let control = Image::new(SCREEN_WIDTH, SCREEN_HEIGHT);
-        Picture{ visual, priority, control }
+    pub fn new() -> Self {
+        let screen_size = (SCREEN_WIDTH * SCREEN_HEIGHT) as usize;
+        let visual = vec![0; screen_size];
+        let priority = vec![0; screen_size];
+        let control = vec![0; screen_size];
+        let port_x = 0;
+        let port_y = 10;
+        Picture{ visual, priority, control, port_x, port_y }
+    }
+
+    pub fn clear(&mut self) {
+        let mask = DRAW_ENABLE_VISUAL | DRAW_ENABLE_PRIORITY | DRAW_ENABLE_CONTROL;
+        let white = 15;
+        for y in self.port_y..SCREEN_HEIGHT {
+            for x in self.port_x..SCREEN_WIDTH {
+                self.put_pixel(x as i32, y as i32, mask, white, 0, 0);
+            }
+        }
+    }
+
+    fn offset_rect(&self, rect: &mut Rect) {
+        rect.top = rect.top + self.port_y;
+        rect.bottom = rect.bottom + self.port_y;
+        rect.left = rect.left + self.port_x;
+        rect.right= rect.right + self.port_x;
+    }
+
+    fn clamp_rect(&self, rect: &mut Rect) {
+        rect.left = clamp(rect.left, 0, SCREEN_WIDTH);
+        rect.right = clamp(rect.right, 0, SCREEN_WIDTH);
+        rect.top = clamp(rect.top, 0, SCREEN_HEIGHT);
+        rect.bottom = clamp(rect.bottom, 0, SCREEN_HEIGHT);
     }
 
     pub fn load(&mut self, data: &[u8]) -> Result<(), PictureError> {
-        let mut draw_enable = DRAW_ENABLE_VISUAL | DRAW_ENABLE_PRIORITY;
-        let mut priority: u8 = 0;
-        let mut control: u8 = 0;
+        let mut priority: u8 = 255;
+        let mut control: u8 = 255;
         let mut col: u8 = 0;
         let mut pattern_nr: u8 = 0;
         let mut pattern_code: u8 = 0;
 
         let mut palette = [ [ 0 as u8; EGA_PALETTE_SIZE ]; EGA_PALETTE_COUNT];
-        //for n in 0..EGA_PALETTE_COUNT {
-        //    for m in 0..EGA_PALETTE_SIZE {
-        //        palette[n][m] = EGA_DEFAULT_PALETTE[m];
-        //    }
-        //}
+
+        if IS_EGA {
+            for n in 0..EGA_PALETTE_COUNT {
+                for m in 0..EGA_PALETTE_SIZE {
+                    palette[n][m] = EGA_DEFAULT_PALETTE[m];
+                }
+            }
+        }
 
         let mut res = stream::Streamer::new(data, 0);
         while !res.end_of_stream() {
             let opcode = res.get_byte();
             match PicOp::try_from(opcode) {
                 Ok(PicOp::SetColor) => {
-                    let code = res.get_byte() as usize;
+                    let code = res.get_byte();
                     info!("SetColor({})", code);
-                    col = palette[code / 40][code % 40];
-                    draw_enable = draw_enable | DRAW_ENABLE_VISUAL;
+                    if IS_EGA {
+                        let code = code as usize;
+                        col = palette[code / EGA_PALETTE_SIZE][code % EGA_PALETTE_SIZE];
+                        col = col ^ (col << 4);
+                    } else {
+                        col = code;
+                    }
                 },
                 Ok(PicOp::DisableVisual) => {
                     info!("DisableVisual");
-                    draw_enable = draw_enable & !DRAW_ENABLE_VISUAL;
+                    col = 255;
                 },
                 Ok(PicOp::SetPriority) => {
                     let code = res.get_byte();
                     info!("SetPriority({})", code);
                     priority = code & 0xf;
-                    draw_enable = draw_enable | DRAW_ENABLE_PRIORITY;
                 },
                 Ok(PicOp::DisablePriority) => {
                     info!("DisablePriority()");
-                    draw_enable = draw_enable & !DRAW_ENABLE_PRIORITY;
+                    priority = 255;
                 },
                 Ok(PicOp::RelativePatterns) => {
                     info!("RelativePatterns()");
-                    if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                        let code = res.get_byte();
-                        pattern_nr = (code >> 1) & 0x7f;
-                    }
+                    update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
 
                     let mut coord = get_abs_coords(&mut res);
-                    self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
+                    self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
 
                     while res.peek_byte() < 0xf0 {
+                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
                         coord = get_rel_coords(&mut res, &coord);
-                        self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
+                        self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::RelativeMediumLines) => {
                     info!("RelativeMediumLines()");
-                    let mut old_coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut res);
                     while res.peek_byte() < 0xf0 {
-                        let code = res.get_byte();
-                        let mut y = old_coord.y;
-                        if (code & 0x80) != 0 {
-                            y = y - (code & 0x7f) as u32;
-                        } else {
-                            y = y + code as u32;
-                        }
-                        let code = res.get_byte();
-                        let mut x = old_coord.x;
-                        if (code & 0x80) != 0 {
-                            x -= 128 - (code & 0x7f) as u32;
-                        } else {
-                            x += code as u32;
-                        }
-                        let coord = Coord{ x, y };
-                        self.dither_line(&old_coord, &coord, col, priority, control, draw_enable);
-                        old_coord = coord;
+                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
+                        self.offset_rect(&mut rect);
+                        self.clamp_rect(&mut rect);
+                        self.draw_line(&rect, col, priority, control);
+                        prev_coord = coord;
                     }
                 },
                 Ok(PicOp::RelativeLongLines) => {
                     info!("RelativeLongLines()");
-                    let mut old_coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut res);
                     while res.peek_byte() < 0xf0 {
                         let coord = get_abs_coords(&mut res);
-                        self.dither_line(&old_coord, &coord, col, priority, control, draw_enable);
-                        old_coord = coord;
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
+                        self.offset_rect(&mut rect);
+                        self.clamp_rect(&mut rect);
+                        self.draw_line(&rect, col, priority, control);
+                        prev_coord = coord;
                     }
                 },
                 Ok(PicOp::RelativeShortLines) => {
                     info!("RelativeShortLines()");
-                    let mut old_coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut res);
                     while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords(&mut res, &old_coord);
-                        self.dither_line(&old_coord, &coord, col, priority, control, draw_enable);
-                        old_coord = coord;
+                        let coord = get_rel_coords(&mut res, &prev_coord);
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
+                        self.offset_rect(&mut rect);
+                        self.clamp_rect(&mut rect);
+                        self.draw_line(&rect, col, priority, control);
+                        prev_coord = coord;
                     }
                 },
                 Ok(PicOp::Fill) => {
                     info!("Fill()");
                     while res.peek_byte() < 0xf0 {
                         let coord = get_abs_coords(&mut res);
-                        self.dither_fill(&coord, col, priority, control, draw_enable);
-                    }
+                        self.dither_fill(&coord, col, priority, control);
+                   }
                 },
                 Ok(PicOp::SetPattern) => {
                     let code = res.get_byte();
@@ -319,49 +374,30 @@ impl Picture {
                 },
                 Ok(PicOp::AbsolutePatterns) => {
                     while res.peek_byte() < 0xf0 {
-                        if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                            let code = res.get_byte();
-                            pattern_nr = (code >> 1) & 0x7f;
-                        }
+                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
                         let coord = get_abs_coords(&mut res);
-                        self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
+                        self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::SetControl) => {
                     let code = res.get_byte();
                     info!("SetControl({})", code);
                     control = code & 0xf;
-                    draw_enable = draw_enable | DRAW_ENABLE_CONTROL;
                 },
                 Ok(PicOp::DisableControl) => {
-                    draw_enable = draw_enable & !DRAW_ENABLE_CONTROL;
+                    control = 255;
                 },
                 Ok(PicOp::RelativeMediumPatterns) => {
                     info!("RelativeMediumPatterns()");
-                    if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                        let code = res.get_byte();
-                        pattern_nr = (code >> 1) & 0x7f;
-                    }
-                    let mut coord = get_abs_coords(&mut res);
+                    update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
+                    let mut prev_coord = get_abs_coords(&mut res);
 
-                    self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
+                    self.draw_pattern(&prev_coord, col, priority, control, pattern_code, pattern_nr);
                     while res.peek_byte() < 0xf0 {
-                        if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                            let code = res.get_byte();
-                            pattern_nr = (code >> 1) & 0x7f;
-                        }
-
-                        let code = res.get_byte();
-                        let mut y = coord.y;
-                        if (code & 0x80) != 0 {
-                            y = y - (code & 0x7f) as u32;
-                        } else {
-                            y = y + code as u32;
-                        }
-                        let x = coord.x + res.get_byte() as u32;
-
-                        coord = Coord{ x, y };
-                        self.draw_pattern(&coord, draw_enable, col, priority, control, pattern_code, pattern_nr);
+                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
+                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                        self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
+                        prev_coord = coord;
                     }
                 },
                 Ok(PicOp::X) => {
@@ -393,6 +429,9 @@ impl Picture {
                 },
                 Ok(PicOp::End) => {
                     info!("End");
+                    if IS_EGA {
+                        self.dither();
+                    }
                     break
                 }
                 Err(_) => { return Err(PictureError::UnrecognizedOpcode(opcode)) }
@@ -401,51 +440,90 @@ impl Picture {
         Ok(())
     }
 
-    fn dither_line(&mut self, start_coord: &Coord, end_coord: &Coord, col: u8, priority: u8, control: u8, draw_enable: u32) {
-        info!("dither_line: start {},{} end {},{} col {}", start_coord.x, start_coord.y, end_coord.x, end_coord.y, col);
+    fn dither(&mut self)
+    {
+        if true /* !undithering_enabled */ {
+            // Provides dithering like the original game
+            for y in 0..SCREEN_HEIGHT {
+                for x in 0..SCREEN_WIDTH {
+                    let offset = (y * SCREEN_WIDTH + x) as usize;
+                    let mut color = self.visual[offset];
+                    if (color & 0xf0) != 0 {
+                        color = color ^ (color << 4);
+                        if (x ^ y) & 1 != 0 {
+                            color = color >> 4;
+                        } else {
+                            color = color & 0x0f;
+                        }
+                        self.visual[offset] = color;
+                    }
+                }
+            }
+        } else {
+            // Uses the wider palette instead of dithering
+            for y in 0..SCREEN_HEIGHT {
+                for x in 0..SCREEN_WIDTH {
+                    let offset = (y * SCREEN_WIDTH + x) as usize;
+                    let mut color = self.visual[offset];
+                    if (color & 0xf0) != 0 {
+                        color = color ^ (color << 4);
+                        let dithered_color;
+                        if (color & 0xf0) != 0 {
+                            dithered_color = color;
+                        } else {
+                            dithered_color = color << 4;
+                        }
+/*
+                        if (x ^ y) & 1 != 0 {
+                            color = color >> 4;
+                        } else {
+                            color = color & 0x0f;
+                        }
+*/
+                        color = dithered_color;
+                    }
+                    self.visual[offset] = color;
+                }
+            }
+        }
+    }
 
-        let mut left = clamp(start_coord.x, 0, SCREEN_WIDTH) as i32;
-        let mut top = clamp(start_coord.y, 0, SCREEN_HEIGHT) as i32;
-        let mut right = clamp(end_coord.x, 0, SCREEN_WIDTH) as i32;
-        let mut bottom = clamp(end_coord.y, 0, SCREEN_HEIGHT) as i32;
+    fn draw_line(&mut self, rect: &Rect, col: u8, priority: u8, control: u8) {
+        let mask = get_drawing_mask(col, priority, control);
+        let mut left = rect.left;
+        let mut right = rect.right;
+        let mut top = rect.top;
+        let mut bottom = rect.bottom;
 
         // Horizontal line
         if top == bottom {
-            if right < left {
-                let temp = right;
-                right = left;
-                left = temp;
-            }
+            if right < left { swap_i32(&mut left, &mut right); }
             for n in left..right + 1 {
-                self.put_pixel(n, top, draw_enable, col, priority, control);
+                self.put_pixel(n, top, mask, col, priority, control);
             }
             return
         }
 
         // Vertical line
         if left == right {
-            if top > bottom {
-                let temp = top;
-                top = bottom;
-                bottom = temp;
-            }
+            if top > bottom { swap_i32(&mut top, &mut bottom); }
             for n in top..bottom + 1 {
-                self.put_pixel(left, n, draw_enable, col, priority, control);
+                self.put_pixel(left, n, mask, col, priority, control);
             }
             return
         }
 
         // Sloped line
-        let dy = bottom as i32 - top as i32;
-        let dx = right as i32 - left as i32;
+        let dy = bottom - top;
+        let dx = right - left;
         let stepy: i32 = if dy < 0 { -1 } else { 1 };
         let stepx: i32 = if dx < 0 { -1 } else { 1 };
         let dy = dy.abs() * 2;
         let dx = dx.abs() * 2;
 
         // First and last pixel
-        self.put_pixel(left, top, draw_enable, col, priority, control);
-        self.put_pixel(right, bottom, draw_enable, col, priority, control);
+        self.put_pixel(left, top, mask, col, priority, control);
+        self.put_pixel(right, bottom, mask, col, priority, control);
 
         if dx > dy {
             // Going horizontal
@@ -457,7 +535,7 @@ impl Picture {
                 }
                 left = left + stepx;
                 fraction = fraction + dy;
-                self.put_pixel(left, top, draw_enable, col, priority, control);
+                self.put_pixel(left, top, mask, col, priority, control);
             }
         } else {
             // Going vertical
@@ -469,61 +547,241 @@ impl Picture {
                 }
                 top = top + stepy;
                 fraction = fraction + dx;
-            }
-            self.put_pixel(left, top, draw_enable, col, priority, control);
-        }
-    }
-
-    fn dither_fill(&mut self, coord: &Coord, _col: u8, _priority: u8, _control: u8, _draw_enable: u32)
-    {
-        info!("dither_fill: {},{}", coord.x, coord.y);
-    }
-
-    fn draw_pattern(&mut self, coord: &Coord, draw_enable: u32, col: u8, priority: u8, control: u8, pattern_code: u8, _pattern_nr: u8)
-    {
-        info!("draw_pattern: {},{}", coord.x, coord.y);
-
-        let size = (pattern_code & PATTERN_MASK_SIZE) as u32;
-        let x = clamp(coord.x - size, 0, SCREEN_WIDTH - 1);
-        let y = clamp(coord.y - size, 0, SCREEN_HEIGHT - 1);
-
-        let rect = Rect{ left: x, top: y, right: x + (size * 2) + 1, bottom: y + (size * 2) + 1 };
-        if (pattern_code & PATTERN_FLAG_RECTANGLE) != 0 {
-            // Rectangle
-            if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                warn!("draw_pattern: TODO: rect with pattern")
-            } else {
-                warn!("draw_pattern: TODO: rect without")
-            }
-        } else {
-            // Circle
-            if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-                warn!("draw_pattern: TODO: circle with pattern")
-            } else {
-                self.draw_circle(&rect, size, draw_enable, col, priority, control);
+                self.put_pixel(left, top, mask, col, priority, control);
             }
         }
     }
 
-    fn draw_circle(&mut self, rect: &Rect, size: u32, draw_enable: u32, col: u8, priority: u8, control: u8)
+    fn is_fill_match(&self, x: i32, y: i32, match_mask: u32, check_col: u8, check_priority: u8, check_control: u8) -> bool
     {
-        let mut bit_num = 0;
-        let mut byte_num: usize = 0;
+        let offset = (y * SCREEN_WIDTH + x) as usize;
+        let is_ega = true;
+        if (match_mask & DRAW_ENABLE_VISUAL) != 0 {
+            let mut visual_color = self.visual[offset];
+            if is_ega {
+                if ((x ^ y) & 1) != 0 {
+                    visual_color = (visual_color ^ (visual_color >> 4)) & 0xf;
+                } else {
+                    visual_color = visual_color & 0xf;
+                }
+            }
+            if visual_color == check_col {
+                return true;
+            }
+        }
 
-        info!("draw_circle: {}, {} - {}, {} size {}", rect.left, rect.top, rect.right, rect.bottom, size);
+        if (match_mask & DRAW_ENABLE_PRIORITY) != 0 && self.priority[offset] == check_priority {
+            return true;
+        }
+        if (match_mask & DRAW_ENABLE_CONTROL) != 0 && self.control[offset] == check_control {
+            return true;
+        }
+        false
+    }
+
+    fn dither_fill(&mut self, coord: &Coord, col: u8, priority: u8, control: u8)
+    {
+        let p = Coord{ x: coord.x + self.port_x, y: coord.y + self.port_y};
+
+        let pixel_offset = (p.y * SCREEN_WIDTH + p.x) as usize;
+        let mut search_color = self.visual[pixel_offset];
+        let search_priority = self.priority[pixel_offset];
+        let search_control = self.control[pixel_offset];
+        if IS_EGA {
+            if ((p.x ^ p.y) & 1) != 0 {
+                search_color = (search_color ^ (search_color >> 4)) & 0x0f;
+            } else {
+                search_color = search_color & 0x0f;
+            }
+        }
+
+        // Abort drawing on several criterion
+        let mut screen_mask = get_drawing_mask(col, priority, control);
+        if (screen_mask & DRAW_ENABLE_VISUAL) != 0 {
+            let color_white = 15;
+            if col == color_white || search_color != color_white { return; }
+        } else if (screen_mask & DRAW_ENABLE_PRIORITY) != 0 {
+            if priority == 0 || search_priority != 0 { return; }
+        } else if (screen_mask & DRAW_ENABLE_CONTROL) != 0 {
+            if control == 0 || search_control != 0 { return; }
+        }
+
+        // Remove screens that already have the correct value
+        if (screen_mask & DRAW_ENABLE_VISUAL) != 0 && search_color == col {
+            screen_mask = screen_mask & !DRAW_ENABLE_VISUAL;
+        }
+        if (screen_mask & DRAW_ENABLE_PRIORITY) != 0 && search_priority == priority {
+            screen_mask = screen_mask & !DRAW_ENABLE_PRIORITY;
+        }
+        if (screen_mask & DRAW_ENABLE_CONTROL) != 0 && search_control == control {
+            screen_mask = screen_mask & !DRAW_ENABLE_CONTROL;
+        }
+        if screen_mask == 0 { return; }
+
+        let mut match_mask: u32 = 0;
+        if (screen_mask & DRAW_ENABLE_VISUAL) != 0 {
+            match_mask = DRAW_ENABLE_VISUAL;
+        } else if (screen_mask & DRAW_ENABLE_PRIORITY) != 0 {
+            match_mask = DRAW_ENABLE_PRIORITY;
+        } else if (screen_mask & DRAW_ENABLE_CONTROL) != 0 {
+            match_mask = DRAW_ENABLE_CONTROL;
+        }
+
+        let border_left = self.port_x as i32;
+        let border_right = self.port_x + SCREEN_WIDTH - 1;
+        let border_top = self.port_y;
+        let border_bottom = clamp(self.port_y + SCREEN_HEIGHT - 1, 0, SCREEN_HEIGHT - 1); // XXX ???
+
+        let mut stack: VecDeque<Coord> = VecDeque::new();
+        stack.push_back(p);
+
+        loop {
+            let p = stack.pop_front();
+            if p.is_none() { break; }
+            let p = p.unwrap();
+
+            if !self.is_fill_match(p.x, p.y, match_mask, search_color, search_priority, search_control) { continue; }
+
+            self.put_pixel(p.x, p.y, screen_mask, col, priority, control);
+            let mut cur_to_left = p.x;
+            let mut cur_to_right = p.x;
+
+            while cur_to_left > border_left && self.is_fill_match(cur_to_left - 1, p.y, match_mask, search_color, search_priority, search_control) {
+                cur_to_left -= 1;
+                self.put_pixel(cur_to_left, p.y, screen_mask, col, priority, control);
+            }
+            while cur_to_right < border_right && self.is_fill_match(cur_to_right + 1, p.y, match_mask, search_color, search_priority, search_control) {
+                cur_to_right += 1;
+                self.put_pixel(cur_to_right, p.y, screen_mask, col, priority, control);
+            }
+
+            let mut a_set = false;
+            let mut b_set = false;
+            while cur_to_left <= cur_to_right {
+                if p.y > border_top && self.is_fill_match(cur_to_left, p.y - 1, match_mask, search_color, search_priority, search_control) {
+                    if !a_set {
+                        stack.push_back(Coord{ x: cur_to_left, y: p.y - 1 });
+                        a_set = true;
+                    }
+                } else {
+                    a_set = false;
+                }
+
+                if p.y < border_bottom && self.is_fill_match(cur_to_left, p.y + 1, match_mask, search_color, search_priority, search_control) {
+                    if !b_set {
+                        stack.push_back(Coord{ x: cur_to_left, y: p.y + 1 });
+                        b_set = true;
+                    }
+                } else {
+                    b_set = false;
+                }
+
+                cur_to_left += 1;
+            }
+        }
+    }
+
+    fn draw_rectangle_with_pattern(&mut self, rect: &Rect, col: u8, priority: u8, control: u8, pattern_nr: u8) {
+        let mask = get_drawing_mask(col, priority, control);
+        let mut pattern_offset: usize = PATTERN_OFFSET[pattern_nr as usize].into();
 
         for y in rect.top..rect.bottom {
             for x in rect.left..rect.right {
-                let bitmap = PATTERN_CIRCLES[size as usize][byte_num];
+                let pattern_byte = PATTERN_TEXTURE[pattern_offset >> 3];
+                if ((pattern_byte >> (7 - (pattern_offset & 7))) & 1) != 0 {
+                    self.put_pixel(x, y, mask, col, priority, control);
+                }
+                pattern_offset += 1;
+                if pattern_offset == 255 { pattern_offset = 0 };
+            }
+        }
+    }
+
+    fn draw_rectangle(&mut self, rect: &Rect, col: u8, priority: u8, control: u8) {
+        let mask = get_drawing_mask(col, priority, control);
+        for y in rect.top..rect.bottom {
+            for x in rect.left..rect.right {
+                self.put_pixel(x, y, mask, col, priority, control);
+            }
+        }
+    }
+
+    fn draw_pattern(&mut self, coord: &Coord, col: u8, priority: u8, control: u8, pattern_code: u8, pattern_nr: u8)
+    {
+        let size = (pattern_code & PATTERN_MASK_SIZE) as i32;
+        let x = clamp(coord.x - size, 0, SCREEN_WIDTH - 1);
+        let y = clamp(coord.y - size, 0, SCREEN_HEIGHT - 1);
+
+        let mut rect = Rect{ left: x, top: y, right: x + (size * 2) + 2, bottom: y + (size * 2) + 1 };
+        self.offset_rect(&mut rect);
+        self.clamp_rect(&mut rect);
+
+        if (pattern_code & PATTERN_FLAG_RECTANGLE) != 0 {
+            if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
+                self.draw_rectangle_with_pattern(&rect, col, priority, control, pattern_nr);
+            } else {
+                self.draw_rectangle(&rect, col, priority, control);
+            }
+        } else {
+            if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
+                self.draw_circle_with_pattern(&rect, size, col, priority, control, pattern_nr);
+            } else {
+                self.draw_circle(&rect, size, col, priority, control);
+            }
+        }
+    }
+
+    fn draw_circle(&mut self, rect: &Rect, size: i32, col: u8, priority: u8, control: u8)
+    {
+        let mask = get_drawing_mask(col, priority, control);
+        let mut bit_num = 0;
+        let circle_data = PATTERN_CIRCLES[size as usize];
+
+        let mut pattern_offset: usize = 0;
+        let mut bitmap = circle_data[pattern_offset];
+        for y in rect.top..rect.bottom {
+            for x in rect.left..rect.right {
                 if bit_num == 8 {
+                    pattern_offset += 1;
+                    bitmap = circle_data[pattern_offset];
                     bit_num = 0;
-                    byte_num += 1;
                 }
 
-                if (bitmap & (1 << bit_num)) != 0 {
-                    self.put_pixel(x as i32, y as i32, draw_enable, col, priority, control);
+                if (bitmap & 1) != 0 {
+                    self.put_pixel(x, y, mask, col, priority, control);
                 }
                 bit_num += 1;
+                bitmap = bitmap >> 1;
+            }
+        }
+    }
+
+    fn draw_circle_with_pattern(&mut self, rect: &Rect, size: i32, col: u8, priority: u8, control: u8, pattern_nr: u8)
+    {
+        let mask = get_drawing_mask(col, priority, control);
+        let mut bit_num = 0;
+        let circle_data = PATTERN_CIRCLES[size as usize];
+        let mut pattern_offset: usize = PATTERN_OFFSET[pattern_nr as usize].into();
+
+        let mut circle_offset: usize = 0;
+        let mut bitmap = circle_data[circle_offset];
+        for y in rect.top..rect.bottom {
+            for x in rect.left..rect.right {
+                if bit_num == 8 {
+                    circle_offset += 1;
+                    bitmap = circle_data[circle_offset];
+                    bit_num = 0;
+                }
+                if (bitmap & 1) != 0 {
+                    let pattern_byte = PATTERN_TEXTURE[pattern_offset >> 3];
+                    if ((pattern_byte >> (7 - (pattern_offset & 7))) & 1) != 0 {
+                        self.put_pixel(x, y, mask, col, priority, control);
+                    }
+                    pattern_offset += 1;
+                    if pattern_offset == 255 { pattern_offset = 0; }
+                }
+                bit_num += 1;
+                bitmap = bitmap >> 1;
             }
         }
     }
@@ -539,40 +797,59 @@ impl Picture {
             return
         }
 
+        let offset = (y * SCREEN_WIDTH + x) as usize;
         if (draw_enable & DRAW_ENABLE_VISUAL) != 0 {
-            self.visual.set_pixel(x as u32, y as u32, ega_color_to_rgb(col));
+            self.visual[offset] = col;
         }
 
         if (draw_enable & DRAW_ENABLE_PRIORITY) != 0 {
-            self.priority.set_pixel(x as u32, y as u32, ega_color_to_rgb(priority));
+            self.priority[offset] = priority;
         }
 
         if (draw_enable & DRAW_ENABLE_CONTROL) != 0 {
-            self.control.set_pixel(x as u32, y as u32, ega_color_to_rgb(control));
+            self.control[offset] = control;
         }
     }
 }
 
+fn create_gif(fname: &str) -> gif::Encoder<File> {
+    let mut palette = [ 0u8; 768 ];
+    palette::fill_ega_colours(&mut palette);
+
+    let gif_file = File::create(fname).unwrap();
+    let gif_encoder = Encoder::new(gif_file, SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &palette);
+    gif_encoder.unwrap()
+}
+
+fn store_gif_bitmap(encoder: &mut gif::Encoder<File>, bits: &[u8]) {
+    let frame = gif::Frame::from_indexed_pixels(SCREEN_WIDTH as u16, SCREEN_HEIGHT as u16, &bits, None);
+    encoder.write_frame(&frame).unwrap();
+}
 
 fn main() -> Result<(), PictureError> {
     env_logger::init();
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        panic!("usage: {} out pic_id", args[0]);
+    if args.len() != 2 {
+        panic!("usage: {} path/pic.nnn", args[0]);
     }
-    let extract_path = &args[1];
-    let pic_id: i16 = args[2].parse().unwrap();
-
-    let pic_data = std::fs::read(format!("{}/pic.{:03}", extract_path, pic_id))?;
+    let pic_path = &args[1];
+    let pic_data = std::fs::read(pic_path)?;
 
     let mut pic = Picture::new();
+    pic.clear();
     if let Err(x) = pic.load(&pic_data) {
         println!("load error: {:?}", x);
     }
 
-    let _ = pic.visual.save("visual.bmp");
-    let _ = pic.control.save("control.bmp");
-    let _ = pic.priority.save("priority.bmp");
+    let mut visual_gif = create_gif("visual.gif");
+    store_gif_bitmap(&mut visual_gif, &pic.visual);
+
+    let mut priority_gif = create_gif("priority.gif");
+    store_gif_bitmap(&mut priority_gif, &pic.priority);
+
+    let mut control_gif = create_gif("control.gif");
+    store_gif_bitmap(&mut control_gif, &pic.control);
+
     Ok(())
 }

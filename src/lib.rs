@@ -19,3 +19,4 @@ pub mod sci;
 pub mod print;
 pub mod class_defs;
 pub mod translate;
+pub mod palette;
