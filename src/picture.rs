@@ -467,7 +467,7 @@ impl Picture {
                 },
                 Ok(PicOp::End) => {
                     if self.is_ega {
-                        self.dither();
+                        self.ega_dither();
                     }
                     break
                 }
@@ -487,7 +487,6 @@ impl Picture {
             palette::parse_vga_palette(&pal_data, palette);
         }
 
-        println!("pic: n_prio {} cel_count {} vector_offset {}", pic.n_priorities, pic.cel_count, pic.vector_offset);
         if pic.cel_count > 0 {
             let cel_offset = pic2.visual_header_offset as usize;
             let mut cel = cel::Cel::new();
@@ -523,54 +522,52 @@ impl Picture {
                 Ok(VGAPicOp::ClearPriority) => {
                     p_color = NO_COLOR;
                 },
+                Ok(VGAPicOp::SetControl) => {
+                    c_color = res.get_byte();
+                },
+                Ok(VGAPicOp::ClearControl) => {
+                    c_color = NO_COLOR;
+                },
                 Ok(VGAPicOp::ShortBrush) => {
                     return Err(PictureError::UnrecognizedOpcode(opcode))
                 },
-                Ok(VGAPicOp::MediumLines) => {
-                    let mut old_coord = get_abs_coords(&mut res);
+                Ok(VGAPicOp::MediumBrush) => {
+                    return Err(PictureError::ObsoleteOpcode(opcode))
+                },
+                Ok(VGAPicOp::AbsoluteBrush) => {
+                    return Err(PictureError::ObsoleteOpcode(opcode))
+                },
+                Ok(VGAPicOp::ShortLines) => {
+                    let mut prev_coord = get_abs_coords(&mut res);
                     while res.peek_byte() < 0xf0 {
-                        let code = res.get_byte();
-                        let mut y = old_coord.y;
-                        if (code & 0x80) != 0 {
-                            y = y - (code & 0x7f) as i32;
-                        } else {
-                            y = y + code as i32;
-                        }
-                        let code = res.get_byte();
-                        let mut x = old_coord.x;
-                        if (code & 0x80) != 0 {
-                            x -= 128 - (code & 0x7f) as i32;
-                        } else {
-                            x += code as i32;
-                        }
-                        let coord = Coord{ x, y };
-                        let mut rect = Rect{ left: old_coord.x, top: old_coord.y, right: coord.x, bottom: coord.y };
+                        let coord = get_rel_coords(&mut res, &prev_coord);
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
                         self.draw_line(&rect, c_color, p_color, v_color);
-                        old_coord = coord;
+                        prev_coord = coord;
+                    }
+                },
+                Ok(VGAPicOp::MediumLines) => {
+                    let mut prev_coord = get_abs_coords(&mut res);
+                    while res.peek_byte() < 0xf0 {
+                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
+                        self.offset_rect(&mut rect);
+                        self.clamp_rect(&mut rect);
+                        self.draw_line(&rect, c_color, p_color, v_color);
+                        prev_coord = coord;
                     }
                 },
                 Ok(VGAPicOp::AbsoluteLines) => {
-                    let mut old_coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut res);
                     while res.peek_byte() < 0xf0 {
                         let coord = get_abs_coords(&mut res);
-                        let mut rect = Rect{ left: old_coord.x, top: old_coord.y, right: coord.x, bottom: coord.y };
+                        let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
                         self.draw_line(&rect, c_color, p_color, v_color);
-                        old_coord = coord;
-                    }
-                },
-                Ok(VGAPicOp::ShortLines) => {
-                    let mut old_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords(&mut res, &old_coord);
-                        let mut rect = Rect{ left: old_coord.x, top: old_coord.y, right: coord.x, bottom: coord.y };
-                        self.offset_rect(&mut rect);
-                        self.clamp_rect(&mut rect);
-                        self.draw_line(&rect, c_color, p_color, v_color);
-                        old_coord = coord;
+                        prev_coord = coord;
                     }
                 },
                 Ok(VGAPicOp::Fill) => {
@@ -580,18 +577,6 @@ impl Picture {
                     }
                 },
                 Ok(VGAPicOp::SetBrushSize) => {
-                    return Err(PictureError::ObsoleteOpcode(opcode))
-                },
-                Ok(VGAPicOp::AbsoluteBrush) => {
-                    return Err(PictureError::ObsoleteOpcode(opcode))
-                },
-                Ok(VGAPicOp::SetControl) => {
-                    c_color = res.get_byte();
-                },
-                Ok(VGAPicOp::ClearControl) => {
-                    c_color = NO_COLOR;
-                },
-                Ok(VGAPicOp::MediumBrush) => {
                     return Err(PictureError::ObsoleteOpcode(opcode))
                 },
                 Ok(VGAPicOp::Special) => {
@@ -612,7 +597,7 @@ impl Picture {
         Ok(())
     }
 
-    fn dither(&mut self)
+    fn ega_dither(&mut self)
     {
         if true /* !undithering_enabled */ {
             // Provides dithering like the original game
