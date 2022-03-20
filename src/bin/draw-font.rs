@@ -87,21 +87,16 @@ fn main() -> Result<(), FontError> {
     env_logger::init();
 
     let args: Vec<String> = env::args().collect();
-    if args.len() != 3 {
-        panic!("usage: {} out font_id", args[0]);
+    if args.len() != 2 {
+        panic!("usage: {} data/font.nnn", args[0]);
     }
-    let extract_path = &args[1];
-    let font_id: i16 = args[2].parse().unwrap();
-
-    let font_data = std::fs::read(format!("{}/font.{:03}", extract_path, font_id))?;
+    let font_path = &args[1];
+    let font_data = std::fs::read(font_path)?;
 
     let mut font = Font::new();
     if let Err(x) = font.load(&font_data) {
         println!("load error: {:?}", x);
     }
-
-    //let mut visual_gif = create_gif("visual.gif");
-    //store_gif_bitmap(&mut visual_gif, &pic.visual);
 
     Ok(())
 }
