@@ -6,24 +6,12 @@ pub struct Streamer<'a> {
 }
 
 impl<'a> Streamer<'a> {
-    pub fn new(input: &'a [u8], input_pos: usize) -> Streamer {
-        Streamer{ input, bits: 0, nbits: 0, input_pos }
+    pub fn new(input: &'a [u8]) -> Streamer {
+        Streamer{ input, bits: 0, nbits: 0, input_pos: 0 }
     }
 
     pub fn end_of_stream(&self) -> bool {
         self.input_pos >= self.input.len()
-    }
-
-    pub fn get_offset(&self) -> usize {
-        self.input_pos
-    }
-
-    pub fn peek_byte(&mut self) -> u8 {
-        let mut b: u8 = 0;
-        if !self.end_of_stream() {
-            b = self.input[self.input_pos];
-        }
-        b
     }
 
     pub fn get_byte(&mut self) -> u8 {

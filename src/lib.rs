@@ -1,4 +1,4 @@
-pub mod stream;
+pub mod bitstream;
 pub mod decompress;
 pub mod resource;
 pub mod resource2;
