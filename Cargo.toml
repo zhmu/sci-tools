@@ -16,3 +16,4 @@ petgraph = "0.5.1"
 indexmap = "1.6.2"
 gif = "0.11.3"
 explode = "0.1.2"
+midly = { version = "0.5.2", default-features = false, features = [ "alloc", "std" ] }
