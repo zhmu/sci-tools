@@ -2,7 +2,9 @@ use packed_struct::prelude::*;
 use num_enum::TryFromPrimitive;
 use std::convert::TryFrom;
 use std::collections::VecDeque;
-use crate::{cel, palette, stream};
+use std::io::Cursor;
+use byteorder::ReadBytesExt;
+use crate::{cel, palette};
 
 #[derive(Debug)]
 pub enum PictureError {
@@ -215,17 +217,24 @@ fn clamp<T: std::cmp::PartialOrd>(val: T, min: T, max: T) -> T {
     }
 }
 
-fn get_abs_coords(res: &mut stream::Streamer) -> Coord {
-    let coord_prefix = res.get_byte();
-    let mut x = res.get_byte() as i32;
-    let mut y = res.get_byte() as i32;
-    x = x | ((coord_prefix & 0xf0) as i32) << 4;
-    y = y | ((coord_prefix & 0x0f) as i32) << 8;
-    Coord{ x, y }
+fn is_next_byte_a_command(rdr: &mut Cursor<&[u8]>) -> bool {
+    let offset = rdr.position();
+    let next_byte = rdr.read_u8().unwrap_or(0);
+    rdr.set_position(offset);
+    next_byte >= 0xf0
 }
 
-fn get_rel_coords(res: &mut stream::Streamer, base: &Coord) -> Coord {
-    let input = res.get_byte();
+fn get_abs_coords(rdr: &mut Cursor<&[u8]>) -> Result<Coord, std::io::Error> {
+    let coord_prefix = rdr.read_u8()?;
+    let mut x = rdr.read_u8()? as i32;
+    let mut y = rdr.read_u8()? as i32;
+    x = x | ((coord_prefix & 0xf0) as i32) << 4;
+    y = y | ((coord_prefix & 0x0f) as i32) << 8;
+    Ok(Coord{ x, y })
+}
+
+fn get_rel_coords(rdr: &mut Cursor<&[u8]>, base: &Coord) -> Result<Coord, std::io::Error> {
+    let input = rdr.read_u8()?;
     let mut x = base.x;
     if (input & 0x80) != 0 {
         x -= ((input >> 4) & 7) as i32;
@@ -238,32 +247,33 @@ fn get_rel_coords(res: &mut stream::Streamer, base: &Coord) -> Coord {
     } else {
         y += (input & 0x07) as i32;
     }
-    Coord{ x, y }
+    Ok(Coord{ x, y })
 }
 
-fn get_rel_coords_med(res: &mut stream::Streamer, base: &Coord) -> Coord {
-    let input = res.get_byte();
+fn get_rel_coords_med(rdr: &mut Cursor<&[u8]>, base: &Coord) -> Result<Coord, std::io::Error> {
+    let input = rdr.read_u8()?;
     let mut y = base.y;
     if (input & 0x80) != 0 {
         y -= (input & 0x7f) as i32;
     } else {
         y += input as i32;
     }
-    let input = res.get_byte();
+    let input = rdr.read_u8()?;
     let mut x = base.x;
     if (input & 0x80) != 0 {
         x -= (128 - (input & 0x7f)) as i32;
     } else {
         x += input as i32;
     }
-    Coord{ x, y }
+    Ok(Coord{ x, y })
 }
 
-fn update_pattern_nr(res: &mut stream::Streamer, pattern_code: u8, pattern_nr: &mut u8)
+fn update_pattern_nr(rdr: &mut Cursor<&[u8]>, pattern_code: u8, pattern_nr: &mut u8)
 {
     if (pattern_code & PATTERN_FLAG_USE_PATTERN) != 0 {
-        let code = res.get_byte();
-        *pattern_nr = (code >> 1) & 0x7f;
+        if let Ok(code) = rdr.read_u8() {
+            *pattern_nr = (code >> 1) & 0x7f;
+        }
     }
 }
 
@@ -334,12 +344,12 @@ impl Picture {
             }
         }
 
-        let mut res = stream::Streamer::new(data, 0);
-        while !res.end_of_stream() {
-            let opcode = res.get_byte();
+        let mut rdr = Cursor::new(data);
+        loop {
+            let opcode = rdr.read_u8()?;
             match PicOp::try_from(opcode) {
                 Ok(PicOp::SetColor) => {
-                    let code = res.get_byte();
+                    let code = rdr.read_u8()?;
                     if self.is_ega {
                         let code = code as usize;
                         col = palette[code / EGA_PALETTE_SIZE][code % EGA_PALETTE_SIZE];
@@ -352,28 +362,28 @@ impl Picture {
                     col = NO_COLOR;
                 },
                 Ok(PicOp::SetPriority) => {
-                    let code = res.get_byte();
+                    let code = rdr.read_u8()?;
                     priority = code & 0xf;
                 },
                 Ok(PicOp::DisablePriority) => {
                     priority = NO_COLOR;
                 },
                 Ok(PicOp::RelativePatterns) => {
-                    update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
+                    update_pattern_nr(&mut rdr, pattern_code, &mut pattern_nr);
 
-                    let mut coord = get_abs_coords(&mut res);
+                    let mut coord = get_abs_coords(&mut rdr)?;
                     self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
 
-                    while res.peek_byte() < 0xf0 {
-                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
-                        coord = get_rel_coords(&mut res, &coord);
+                    while !is_next_byte_a_command(&mut rdr) {
+                        update_pattern_nr(&mut rdr, pattern_code, &mut pattern_nr);
+                        coord = get_rel_coords(&mut rdr, &coord)?;
                         self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::RelativeMediumLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_rel_coords_med(&mut rdr, &prev_coord)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -382,9 +392,9 @@ impl Picture {
                     }
                 },
                 Ok(PicOp::RelativeLongLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_abs_coords(&mut rdr)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -393,9 +403,9 @@ impl Picture {
                     }
                 },
                 Ok(PicOp::RelativeShortLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords(&mut res, &prev_coord);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_rel_coords(&mut rdr, &prev_coord)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -404,52 +414,52 @@ impl Picture {
                     }
                 },
                 Ok(PicOp::Fill) => {
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_abs_coords(&mut res);
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_abs_coords(&mut rdr)?;
                         self.dither_fill(&coord, col, priority, control);
                    }
                 },
                 Ok(PicOp::SetPattern) => {
-                    let code = res.get_byte();
+                    let code = rdr.read_u8()?;
                     pattern_code = code;
                 },
                 Ok(PicOp::AbsolutePatterns) => {
-                    while res.peek_byte() < 0xf0 {
-                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
-                        let coord = get_abs_coords(&mut res);
+                    while !is_next_byte_a_command(&mut rdr) {
+                        update_pattern_nr(&mut rdr, pattern_code, &mut pattern_nr);
+                        let coord = get_abs_coords(&mut rdr)?;
                         self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
                     }
                 },
                 Ok(PicOp::SetControl) => {
-                    let code = res.get_byte();
+                    let code = rdr.read_u8()?;
                     control = code & 0xf;
                 },
                 Ok(PicOp::DisableControl) => {
                     control = NO_COLOR;
                 },
                 Ok(PicOp::RelativeMediumPatterns) => {
-                    update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
-                    let mut prev_coord = get_abs_coords(&mut res);
+                    update_pattern_nr(&mut rdr, pattern_code, &mut pattern_nr);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
 
                     self.draw_pattern(&prev_coord, col, priority, control, pattern_code, pattern_nr);
-                    while res.peek_byte() < 0xf0 {
-                        update_pattern_nr(&mut res, pattern_code, &mut pattern_nr);
-                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                    while !is_next_byte_a_command(&mut rdr) {
+                        update_pattern_nr(&mut rdr, pattern_code, &mut pattern_nr);
+                        let coord = get_rel_coords_med(&mut rdr, &prev_coord)?;
                         self.draw_pattern(&coord, col, priority, control, pattern_code, pattern_nr);
                         prev_coord = coord;
                     }
                 },
                 Ok(PicOp::X) => {
-                    let opcodex = res.get_byte();
+                    let opcodex = rdr.read_u8()?;
                     match PicOpX::try_from(opcodex) {
                         //Ok(PicOpX::SetPaletteEntry) => { return Err(PictureError::PicOpX) },
                         Ok(PicOpX::SetPalette) => {
-                            let palette_index = res.get_byte() as usize;
+                            let palette_index = rdr.read_u8()? as usize;
                             if palette_index >= EGA_PALETTE_COUNT {
                                 return Err(PictureError::InvalidPalette(palette_index))
                             }
                             for n in 0..EGA_PALETTE_SIZE {
-                                palette[palette_index][n] = res.get_byte();
+                                palette[palette_index][n] = rdr.read_u8()?;
                             }
                         },
                         //Ok(PicOpX::Mono0) => { return Err(PictureError::TODO) },
@@ -469,12 +479,11 @@ impl Picture {
                     if self.is_ega {
                         self.ega_dither();
                     }
-                    break
+                    return Ok(())
                 }
                 Err(_) => { return Err(PictureError::UnrecognizedOpcode(opcode)) }
             }
         }
-        Ok(())
     }
 
     pub fn load_vga(&mut self, data: &[u8], load_palette: bool, palette: &mut [ u8; 768 ]) -> Result<(), PictureError> {
@@ -502,28 +511,28 @@ impl Picture {
             }
         }
 
-        let mut res = stream::Streamer::new(&data[pic.vector_offset as usize..], 0);
+        let mut rdr = Cursor::new(&data[pic.vector_offset as usize..]);
         let mut c_color: u8 = NO_COLOR;
         let mut v_color: u8 = NO_COLOR;
         let mut p_color: u8 = NO_COLOR;
-        while !res.end_of_stream() {
-            let opcode = res.get_byte();
+        loop {
+            let opcode = rdr.read_u8()?;
             match VGAPicOp::try_from(opcode) {
                 Ok(VGAPicOp::SetColor) => {
-                    v_color = res.get_byte();
+                    v_color = rdr.read_u8()?;
                 },
                 Ok(VGAPicOp::ClearColor) => {
                     v_color = NO_COLOR;
                 },
                 Ok(VGAPicOp::SetPriority) => {
-                    let color = res.get_byte();
+                    let color = rdr.read_u8()?;
                     p_color = color << 4;
                 },
                 Ok(VGAPicOp::ClearPriority) => {
                     p_color = NO_COLOR;
                 },
                 Ok(VGAPicOp::SetControl) => {
-                    c_color = res.get_byte();
+                    c_color = rdr.read_u8()?;
                 },
                 Ok(VGAPicOp::ClearControl) => {
                     c_color = NO_COLOR;
@@ -538,9 +547,9 @@ impl Picture {
                     return Err(PictureError::ObsoleteOpcode(opcode))
                 },
                 Ok(VGAPicOp::ShortLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords(&mut res, &prev_coord);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_rel_coords(&mut rdr, &prev_coord)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -549,9 +558,9 @@ impl Picture {
                     }
                 },
                 Ok(VGAPicOp::MediumLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_rel_coords_med(&mut res, &prev_coord);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_rel_coords_med(&mut rdr, &prev_coord)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -560,9 +569,9 @@ impl Picture {
                     }
                 },
                 Ok(VGAPicOp::AbsoluteLines) => {
-                    let mut prev_coord = get_abs_coords(&mut res);
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_abs_coords(&mut res);
+                    let mut prev_coord = get_abs_coords(&mut rdr)?;
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_abs_coords(&mut rdr)?;
                         let mut rect = Rect{ left: prev_coord.x, top: prev_coord.y, right: coord.x, bottom: coord.y };
                         self.offset_rect(&mut rect);
                         self.clamp_rect(&mut rect);
@@ -571,8 +580,8 @@ impl Picture {
                     }
                 },
                 Ok(VGAPicOp::Fill) => {
-                    while res.peek_byte() < 0xf0 {
-                        let coord = get_abs_coords(&mut res);
+                    while !is_next_byte_a_command(&mut rdr) {
+                        let coord = get_abs_coords(&mut rdr)?;
                         self.dither_fill(&coord, c_color, p_color, v_color);
                     }
                 },
@@ -580,7 +589,7 @@ impl Picture {
                     return Err(PictureError::ObsoleteOpcode(opcode))
                 },
                 Ok(VGAPicOp::Special) => {
-                    let opcodex = res.get_byte();
+                    let opcodex = rdr.read_u8()?;
                     match VGAPicOpSpecial::try_from(opcodex) {
                         Ok(v) => { return Err(PictureError::UnimplementedSpecial(v)) },
                         Err(_) => {
