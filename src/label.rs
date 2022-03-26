@@ -7,7 +7,7 @@ pub type LabelMap = HashMap<intermediate::Offset, String>;
 fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
     let mut translator = translate::Translator::new();
 
-    let disasm = disassemble::Disassembler::new(&block, 0);
+    let disasm = disassemble::Disassembler::new(&block);
     for ins in disasm {
         let ii = translator.convert(&ins);
         if ii.ops.is_empty() { continue; }

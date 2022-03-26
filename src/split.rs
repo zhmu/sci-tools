@@ -60,7 +60,7 @@ pub struct SplitResult<'a> {
 
 pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &label::LabelMap) -> SplitResult<'a> {
     let mut blocks: Vec<code::CodeBlock> = Vec::new();
-    let disasm = disassemble::Disassembler::new(&script_block, 0);
+    let disasm = disassemble::Disassembler::new(&script_block);
     let mut block_offsets: HashSet<intermediate::Offset> = HashSet::new();
 
     let mut translator = translate::Translator::new();
