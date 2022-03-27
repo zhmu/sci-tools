@@ -24,3 +24,4 @@ pub mod palette;
 pub mod picture;
 pub mod cel;
 pub mod view;
+pub mod font;
