@@ -23,3 +23,4 @@ pub mod translate;
 pub mod palette;
 pub mod picture;
 pub mod cel;
+pub mod view;
