@@ -1,47 +1,10 @@
 extern crate scitools;
 
-use num_enum::TryFromPrimitive;
-use std::convert::TryFrom;
 use std::env;
-use phf::phf_map;
 use std::fs::File;
 use std::io::Write;
 use explode::explode;
-
-use scitools::resource2;
-use scitools::decompress;
-
-#[derive(TryFromPrimitive)]
-#[repr(u16)]
-enum CompressionMethod {
-    None = 0,
-    LZW = 1,
-    Huffman = 2
-}
-
-static RESOURCE_TYPE_MAP: phf::Map<u8, &'static str> = phf_map!{
-    0u8 => "view",
-    1u8 => "pic",
-    2u8 => "script",
-    3u8 => "text",
-    4u8 => "sound",
-    5u8 => "memory",
-    6u8 => "vocab",
-    7u8 => "font",
-    8u8 => "cursor",
-    9u8 => "patch",
-    10u8 => "bitmap",
-    11u8 => "palette",
-    12u8 => "wave",
-    13u8 => "audio",
-    14u8 => "sync",
-    15u8 => "msg",
-    16u8 => "map",
-    17u8 => "heap",
-    18u8 => "audio36",
-    19u8 => "sync36",
-    20u8 => "xlate",
-};
+use scitools::{restype, resource2};
 
 fn main() -> Result<(), std::io::Error> {
     let args: Vec<String> = env::args().collect();
@@ -57,9 +20,12 @@ fn main() -> Result<(), std::io::Error> {
     for entry in resources.iter() {
         let resource = resource2::get_resource_data(data_path, &entry)?;
         let rh = &resource.header;
-        let res_type = rh.res_type & 0x7f;
+        let r_type = rh.res_type & 0x7f;
+        let r_type = restype::u8_to_resource_type(r_type).unwrap();
+        let r_type_str = restype::resource_type_to_str(r_type);
+
         println!("  resource: {}.{:03} segment_length {} length {} compress_used {}",
-            RESOURCE_TYPE_MAP[&res_type], rh.id, rh.segment_length, rh.length, rh.compress_used);
+            r_type_str, rh.id, rh.segment_length, rh.length, rh.compress_used);
 
         let mut output: Vec<u8> = Vec::new();
         if rh.compress_used != 0 {
@@ -77,7 +43,7 @@ fn main() -> Result<(), std::io::Error> {
         }
 
         if !output.is_empty() {
-            let out_fname = format!("{}/{}.{:03}", out_path, RESOURCE_TYPE_MAP[&res_type], entry.r_number);
+            let out_fname = format!("{}/{}.{:03}", out_path, r_type_str, entry.r_number);
             let mut r_file = File::create(out_fname)?;
             r_file.write_all(&output)?;
         }

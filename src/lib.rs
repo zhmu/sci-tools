@@ -25,3 +25,4 @@ pub mod picture;
 pub mod cel;
 pub mod view;
 pub mod font;
+pub mod restype;
