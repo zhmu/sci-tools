@@ -1,18 +1,9 @@
 use crate::opcode;
 use crate::script;
-use crate::stream;
+use std::io::Cursor;
+use byteorder::{ReadBytesExt, LittleEndian};
 
 pub type ArgType = u16;
-
-fn get_u8(stream: &mut stream::Streamer) -> ArgType {
-    stream.get_byte() as ArgType
-}
-
-fn get_u16(stream: &mut stream::Streamer) -> ArgType {
-    let a = stream.get_byte() as ArgType;
-    let b = stream.get_byte() as ArgType;
-    (b << 8) + a
-}
 
 pub struct Instruction<'a> {
     pub offset: usize,
@@ -23,13 +14,13 @@ pub struct Instruction<'a> {
 
 pub struct Disassembler<'a> {
     block: &'a script::ScriptBlock<'a>,
-    stream: stream::Streamer<'a>
+    rdr: Cursor<&'a [u8]>,
 }
 
 impl<'a> Disassembler<'a> {
-    pub fn new(block: &'a script::ScriptBlock, input_pos: usize) -> Disassembler<'a> {
-        let stream = stream::Streamer::new(&block.data, input_pos);
-        Disassembler{ block, stream }
+    pub fn new(block: &'a script::ScriptBlock) -> Disassembler<'a> {
+        let rdr = Cursor::new(block.data);
+        Disassembler{ block, rdr }
     }
 }
 
@@ -37,24 +28,27 @@ impl<'a> Iterator for Disassembler<'a> {
     type Item = Instruction<'a>;
 
     fn next(&mut self) -> Option<Instruction<'a>> {
-        if self.stream.end_of_stream() {
-            return None
-        }
+        let offset = self.rdr.position() as usize;
+        let opcode = self.rdr.read_u8();
+        if opcode.is_err() { return None }
 
-        let offset = self.stream.get_offset();
-        let opcode = &opcode::OPCODES[self.stream.get_byte() as usize];
+        let opcode = &opcode::OPCODES[opcode.unwrap() as usize];
         let mut args: Vec<ArgType> = Vec::new();
         for arg in opcode.arg {
             match arg {
                 opcode::Arg::RelPos8 | opcode::Arg::Imm8 => {
-                    args.push(get_u8(&mut self.stream));
+                    let value = self.rdr.read_u8();
+                    if value.is_err() { return None }
+                    args.push(value.unwrap().into());
                 },
                 opcode::Arg::RelPos16 | opcode::Arg::Imm16 => {
-                    args.push(get_u16(&mut self.stream));
+                    let value = self.rdr.read_u16::<LittleEndian>();
+                    if value.is_err() { return None }
+                    args.push(value.unwrap());
                 },
             }
         }
-        let bytes = &self.block.data[offset..self.stream.get_offset()];
+        let bytes = &self.rdr.get_ref()[offset..self.rdr.position() as usize];
         Some(Instruction{ offset: self.block.base + offset, bytes, opcode, args })
     }
 }

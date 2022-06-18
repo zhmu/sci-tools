@@ -1,4 +1,4 @@
-use crate::{code, intermediate, script, disassemble, label};
+use crate::{code, intermediate, script, disassemble, label, translate};
 
 use std::collections::{HashMap, HashSet};
 
@@ -32,12 +32,15 @@ fn is_conditional_branch(ii: &intermediate::Instruction) -> Option<(intermediate
 }
 
 fn must_split(ii: &intermediate::Instruction) -> bool {
-    let ic = ii.ops.last().unwrap();
-    match ic {
-        intermediate::IntermediateCode::BranchAlways(_) => { true },
-        intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
-        intermediate::IntermediateCode::Return() => { true },
-        _ => { false }
+    if let Some(ic) = ii.ops.last() {
+        return match ic {
+            intermediate::IntermediateCode::BranchAlways(_) => { true },
+            intermediate::IntermediateCode::Branch{ taken_offset: _, next_offset: _, cond: _ } => { true },
+            intermediate::IntermediateCode::Return(..) => { true },
+            _ => { false }
+        };
+    } else {
+        return false;
     }
 }
 
@@ -50,15 +53,22 @@ fn split_instructions_from_block(block: &mut code::CodeBlock, offset: intermedia
     unreachable!();
 }
 
-pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &label::LabelMap) -> Vec<code::CodeBlock<'a>> {
+pub struct SplitResult<'a> {
+    pub blocks: Vec<code::CodeBlock<'a>>,
+    pub helpervar_index: usize,
+}
+
+pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &label::LabelMap) -> SplitResult<'a> {
     let mut blocks: Vec<code::CodeBlock> = Vec::new();
-    let disasm = disassemble::Disassembler::new(&script_block, 0);
+    let disasm = disassemble::Disassembler::new(&script_block);
     let mut block_offsets: HashSet<intermediate::Offset> = HashSet::new();
+
+    let mut translator = translate::Translator::new();
 
     // Split on specific instruction
     let mut instructions: Vec<intermediate::Instruction> = Vec::new();
     for ins in disasm {
-        instructions.push(intermediate::convert_instruction(&ins));
+        instructions.push(translator.convert(&ins));
         let ii = instructions.last().unwrap().clone();
         if !must_split(&ii) { continue; }
 
@@ -119,6 +129,6 @@ pub fn split_code_in_blocks<'a>(script_block: &'a script::ScriptBlock, labels: &
        fill_out_index(&mut block.branch_index_false, &offset_to_index);
     }
 
-    blocks
+    SplitResult{ blocks, helpervar_index: translator.get_helpervar_index() }
 }
 

@@ -9,6 +9,7 @@ use std::convert::TryInto;
 
 use petgraph::graph::NodeIndex;
 use petgraph::algo::kosaraju_scc;
+use petgraph::visit::{Dfs, EdgeRef};
 use petgraph::{Incoming, Outgoing};
 
 const DEBUG_VM: bool = false;
@@ -119,12 +120,12 @@ fn split_if_code<'a>(ops: &'a Vec<code::Operation>) -> (&'a [intermediate::Instr
     }
 }
 
-fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction]) -> String {
-    let mut vm = execute::VM::new(&state, class_definitions);
+fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction]) -> String {
+    let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
-                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                println!(">> execute {:04x} {:?}", ins.offset, op);
             }
             vm.execute(&op);
         }
@@ -135,7 +136,9 @@ fn convert_instructions(state: &mut execute::VMState, formatter: &print::Formatt
         result += format!("{}{}\n", indent, formatter.format_rop(rop)).as_str();
     }
     match vm.branch {
-        execute::BranchIf::Condition(_) => { unreachable!() },
+        execute::BranchIf::Condition(expr) => {
+            result += format!("{}todo!(\"got condition node here: \"{}\")\n", indent, formatter.format_expression(&expr)).as_str();
+        },
         execute::BranchIf::Never => { }
     }
     result
@@ -175,12 +178,12 @@ fn invert_boolean_expression(expr: &intermediate::Expression) -> intermediate::E
     }
 }
 
-fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, indent: &str, instructions: &[intermediate::Instruction], invert_cond: bool) -> String {
-    let mut vm = execute::VM::new(&state, class_definitions);
+fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatter, indent: &str, instructions: &[intermediate::Instruction], invert_cond: bool) -> String {
+    let mut vm = execute::VM::new(&state);
     for ins in instructions {
         for op in &ins.ops {
             if DEBUG_VM {
-                println!(">> execute {:04x} {:?} -- current sp {:?}", ins.offset, op, vm.state.sp);
+                println!(">> execute {:04x} {:?}", ins.offset, op);
             }
             vm.execute(&op);
         }
@@ -205,7 +208,7 @@ fn convert_conditional(state: &mut execute::VMState, formatter: &print::Formatte
     result
 }
 
-fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, ops: &Vec<code::Operation>, level: i32) -> String {
+fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, ops: &Vec<code::Operation>, level: i32) -> String {
     let mut indent = String::new();
     for _ in 0..level { indent += "    "; }
 
@@ -217,23 +220,23 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, clas
                 let (code, if_condition) = split_if_code(&condition);
 
                 let mut false_state = state.clone();
-                let false_code = convert_code(&mut false_state, formatter, class_definitions, &on_false, level + 1);
+                let false_code = convert_code(&mut false_state, formatter, &on_false, level + 1);
 
-                let code = convert_instructions(state, formatter, class_definitions, &indent, code);
+                let code = convert_instructions(state, formatter, &indent, code);
                 result += &code;
 
                 // The compiler prefers to invert conditions (likely some optimisation?) so if we
                 // assume that all conditions are inverted (i.e.  if the comparison is false, it
                 // corresponds to the thing being checked). This greatly improves decompiler
                 // output.
-                let if_code = convert_conditional(state, formatter, class_definitions, format!("{}    ", indent).as_str(), if_condition, true);
+                let if_code = convert_conditional(state, formatter, format!("{}    ", indent).as_str(), if_condition, true);
                 let if_code = if_code.trim();
                 result += format!("{}if ({}) {{\n", indent, if_code).as_str();
                 result += &false_code;
 
                 if !on_true.is_empty() {
                     let mut true_state = state.clone();
-                    let true_code = convert_code(&mut true_state, formatter, class_definitions, &on_true, level + 1);
+                    let true_code = convert_code(&mut true_state, formatter, &on_true, level + 1);
 
                     result += format!("{}}} else {{\n", indent).as_str();
                     result += &true_code;
@@ -242,7 +245,7 @@ fn convert_code(state: &mut execute::VMState, formatter: &print::Formatter, clas
             },
             code::Operation::Execute(frag) => {
                 result += format!("{}// {:x} .. {:x}\n", indent, frag.get_start_offset(), frag.get_end_offset()).as_str();
-                result += &convert_instructions(state, formatter, class_definitions, &indent, &frag.instructions);
+                result += &convert_instructions(state, formatter, &indent, &frag.instructions);
             },
         }
     }
@@ -286,7 +289,27 @@ fn find_offset(op: &code::Operation) -> u16 {
     }
 }
 
-fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, formatter: &print::Formatter, class_definitions: &class_defs::ClassDefinitions, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+fn determine_reachable_nodes_from(graph: &code::CodeGraph, start_node: NodeIndex) -> Vec<NodeIndex> {
+    let mut nodes: Vec<(NodeIndex, Vec<code::CodeInterval>)> = Vec::new();
+    let mut dfs = Dfs::new(&graph, start_node);
+    while let Some(nx) = dfs.next(&graph) {
+        let node = &graph[nx];
+        let offsets = code::get_node_offsets(&node);
+        nodes.push((nx, offsets));
+    }
+
+    // Sort all reachable nodes by offset; this helps keeping the flow somewhat
+    // understandable and consistent
+    nodes.sort_by(|a, b| a.1.first().unwrap().start.cmp(&b.1.first().unwrap().start) );
+
+    let mut result: Vec<NodeIndex> = Vec::new();
+    for (n, _) in nodes {
+        result.push(n);
+    }
+    result
+}
+
+fn write_intermediate_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
     for n in graph.node_indices() {
         let node = &graph[n];
         if graph.edges_directed(n, Incoming).count() != 0 { continue; }
@@ -294,22 +317,84 @@ fn write_code(int_file: &mut std::fs::File, out_file: &mut std::fs::File, format
         let base = find_offset(&node.ops.first().unwrap());
         let label = formatter.get_label(base);
 
-        writeln!(int_file, "// Block at {:x}", base)?;
-        writeln!(int_file, "{} {{", label)?;
         writeln!(out_file, "// Block at {:x}", base)?;
         writeln!(out_file, "{} {{", label)?;
 
         if graph.edges_directed(n, Outgoing).count() == 0 {
-            writeln!(int_file, "{}", format_ops(&node.ops, 1))?;
-            let mut state = execute::VMState::new();
-            writeln!(out_file, "{}", convert_code(&mut state, &formatter, class_definitions, &node.ops, 1))?;
+            writeln!(out_file, "{}", format_ops(&node.ops, 1))?;
         } else {
             let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
-            writeln!(int_file, "{}", msg)?;
             writeln!(out_file, "{}", msg)?;
+
+            let nodes = determine_reachable_nodes_from(graph, n);
+            for n in nodes {
+                let node = &graph[n];
+                let offsets = code::get_node_offsets(&node);
+                writeln!(out_file, "{}:", format_offsets(&offsets))?;
+                writeln!(out_file, "{}", format_ops(&node.ops, 1))?;
+            }
         }
 
-        writeln!(int_file, "}}\n")?;
+        writeln!(out_file, "}}\n")?;
+
+    }
+    Ok(())
+}
+
+fn format_offsets(offsets: &Vec<code::CodeInterval>) -> String {
+    return if offsets.len() == 1 {
+        format!("offset_{}", offsets[0].start)
+    } else {
+        format!("offsets_{:?}", offsets)
+    }
+}
+
+fn write_code(out_file: &mut std::fs::File, formatter: &print::Formatter, graph: &code::CodeGraph) -> Result<(), std::io::Error> {
+    for n in graph.node_indices() {
+        let node = &graph[n];
+        if graph.edges_directed(n, Incoming).count() != 0 { continue; }
+
+        let base = find_offset(&node.ops.first().unwrap());
+        let label = formatter.get_label(base);
+
+        writeln!(out_file, "// Block at {:x}", base)?;
+        writeln!(out_file, "{} {{", label)?;
+
+        if graph.edges_directed(n, Outgoing).count() == 0 {
+            let mut state = execute::VMState::new();
+            writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
+        } else {
+            let msg = format!("    TODO(node {:?} does not reduce to a single node)", node.as_str());
+            writeln!(out_file, "{}", msg)?;
+
+            let nodes = determine_reachable_nodes_from(graph, n);
+            for n in nodes {
+                let node = &graph[n];
+                let offsets = code::get_node_offsets(&node);
+                writeln!(out_file, "{}:", format_offsets(&offsets))?;
+                let mut state = execute::VMState::new();
+                writeln!(out_file, "{}", convert_code(&mut state, &formatter, &node.ops, 1))?;
+
+                let outgoing: Vec<_> = graph.edges_directed(n, Outgoing).collect();
+                for o in outgoing {
+                    let dest = o.target();
+                    let node = o.weight();
+                    let offsets = code::get_node_offsets(&graph[dest]);
+                    match node.branch {
+                        code::Branch::Always => {
+                            writeln!(out_file, "    always goto {}\n", format_offsets(&offsets))?;
+                        },
+                        code::Branch::True => {
+                            writeln!(out_file, "    on_true goto {}\n", format_offsets(&offsets))?;
+                        },
+                        code::Branch::False => {
+                            writeln!(out_file, "    on_false goto {}\n", format_offsets(&offsets))?;
+                        },
+                    }
+                }
+            }
+        }
+
         writeln!(out_file, "}}\n")?;
 
     }
@@ -414,9 +499,11 @@ fn main() -> Result<(), ScriptError> {
     let mut labels = label::find_code_labels(&script);
 
     let out_path = "tmp";
+    let mut dbg_file = File::create(format!("{}/{}.debug.txt", out_path, script_id))?;
     let mut int_file = File::create(format!("{}/{}.intermediate.txt", out_path, script_id))?;
     let mut out_file = File::create(format!("{}/{}.txt", out_path, script_id))?;
 
+    println!("> Parsing non-code blocks...");
     let mut object_classes: Vec<object_class::ObjectClass> = Vec::new();
     let mut saids: Vec<said::Said> = Vec::new();
     for block in &script.blocks {
@@ -440,28 +527,41 @@ fn main() -> Result<(), ScriptError> {
         }
     }
 
-    let formatter = print::Formatter::new(&labels, &selector_vocab, &class_definitions);
+    let formatter = print::Formatter::new(&labels, &selector_vocab);
     for block in &script.blocks {
         if let Some(base) = script_base_offset {
             if block.base != base { continue; }
         }
         match block.r#type {
             script::BlockType::Code => {
-                let code_blocks = split::split_code_in_blocks(&block, &labels);
-                let mut graph = code::create_graph_from_codeblocks(&code_blocks);
+                println!("> Processing code block at offset {:x}", block.base);
+                let split_result = split::split_code_in_blocks(&block, &labels);
+                let mut graph = code::create_graph_from_codeblocks(&split_result.blocks);
 
-                flow::analyse_inout(&mut graph, &class_definitions);
+                println!("> Writing code...");
+                write_intermediate_code(&mut dbg_file, &formatter, &graph)?;
+
+                println!("> Performing send analysis...");
+                let helpvar_index = flow::analyse_send(&mut graph, &class_definitions, split_result.helpervar_index);
+
+                println!("> Performing flow analysis...");
+                let _helpervar_index = flow::analyse_inout(&mut graph, &class_definitions, helpvar_index);
 
                 let out_fname = format!("dot/{:x}.orig.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
+                println!("> Reducing graph...");
                 reduce::reduce_graph(&mut graph);
+
+                println!("> Analysing graph...");
                 analyse_graph(&graph);
 
                 let out_fname = format!("dot/{:x}.dot", block.base);
                 code::plot_graph(&out_fname, &graph, |_| { "".to_string() })?;
 
-                write_code(&mut int_file, &mut out_file, &formatter, &class_definitions, &graph)?;
+                println!("> Writing code...");
+                write_intermediate_code(&mut int_file, &formatter, &graph)?;
+                write_code(&mut out_file, &formatter, &graph)?;
             },
             _ => { }
         };

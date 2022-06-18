@@ -1,4 +1,4 @@
-use crate::stream;
+use crate::bitstream;
 
 #[derive(Copy, Clone)]
 struct Token {
@@ -7,7 +7,7 @@ struct Token {
 }
 
 pub fn decompress_lzw(input: &[u8], output: &mut Vec<u8>) {
-    let mut stream = stream::Streamer::new(input, 0);
+    let mut stream = bitstream::Streamer::new(input);
     let mut tokens = [ Token{ offset: 0, length: 0 }; 4096 ];
 
     let mut token_lastlength: usize;
@@ -49,7 +49,7 @@ pub fn decompress_lzw(input: &[u8], output: &mut Vec<u8>) {
     }
 }
 
-fn get_huffman_code(stream: &mut stream::Streamer, nodes: &Vec<u8>) -> u16
+fn get_huffman_code(stream: &mut bitstream::Streamer, nodes: &Vec<u8>) -> u16
 {
     let mut node_index: usize = 0;
     let mut next: usize;
@@ -68,7 +68,7 @@ fn get_huffman_code(stream: &mut stream::Streamer, nodes: &Vec<u8>) -> u16
 }
 
 pub fn decompress_huffman(input: &[u8], output: &mut Vec<u8>) {
-    let mut stream = stream::Streamer::new(input, 0);
+    let mut stream = bitstream::Streamer::new(input);
     let num_nodes: u16 = 2 * stream.get_byte() as u16;
     let terminator: u16 = 0x100 | (stream.get_byte() as u16);
 

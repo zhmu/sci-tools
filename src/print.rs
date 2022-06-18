@@ -1,14 +1,13 @@
-use crate::{label, vocab, intermediate, execute, sci, class_defs};
+use crate::{label, vocab, intermediate, execute, sci};
 
 pub struct Formatter<'a> {
     labels: &'a label::LabelMap,
     sel_vocab: &'a vocab::Vocab997,
-    class_definitions: &'a class_defs::ClassDefinitions
 }
 
 impl<'a> Formatter<'a> {
-    pub fn new(labels: &'a label::LabelMap, sel_vocab: &'a vocab::Vocab997, class_definitions: &'a class_defs::ClassDefinitions) -> Self {
-        Formatter{ labels, sel_vocab, class_definitions }
+    pub fn new(labels: &'a label::LabelMap, sel_vocab: &'a vocab::Vocab997) -> Self {
+        Formatter{ labels, sel_vocab }
     }
 
     fn format_operand(&self, op: &intermediate::Operand) -> String {
@@ -30,25 +29,32 @@ impl<'a> Formatter<'a> {
             intermediate::Operand::HelperVariable(num) => {
                 format!("v{}", num)
             },
+            intermediate::Operand::Stack(num) => {
+                format!("s{}", num)
+            },
             intermediate::Operand::SelectorValue(expr, selector_nr) => {
                 let expr = self.format_expression(expr);
                 let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
                 format!("{}.{}", expr, selector)
             },
+            intermediate::Operand::InvokeSelector(expr, selector_nr, params) => {
+                let expr = self.format_expression(expr);
+                let selector = self.sel_vocab.get_selector_name(*selector_nr as usize).to_string();
+                let params = self.format_expression_vec(params);
+                format!("{}.{}({})", expr, selector, params)
+            },
             intermediate::Operand::Acc => { "acc".to_string() },
             intermediate::Operand::Prev => { "prev".to_string() },
-            intermediate::Operand::Sp => { "sp".to_string() },
-            intermediate::Operand::Tos => { "tos".to_string() },
-            intermediate::Operand::Rest => { "rest".to_string() },
             intermediate::Operand::OpSelf => { "self".to_string() },
-            intermediate::Operand::Tmp => { "tmp".to_string() }
-            intermediate::Operand::CallResult => { "callResult".to_string() }
+            intermediate::Operand::Tmp => { "tmp".to_string() },
+            intermediate::Operand::CallResult => { "callResult".to_string() },
         }
     }
 
     pub fn format_expression(&self, expr: &intermediate::Expression) -> String {
         match expr {
             intermediate::Expression::Undefined => { "undefined".to_string() },
+            intermediate::Expression::Rest(index) => { format!("...({})", index)},
             intermediate::Expression::Operand(op) => { self.format_operand(op) },
             intermediate::Expression::Binary(op, expr1, expr2) => {
                 let expr1 = self.format_expression(expr1);
@@ -75,7 +81,7 @@ impl<'a> Formatter<'a> {
                     intermediate::BinaryOp::UnsignedLess => { "u<" },
                     intermediate::BinaryOp::UnsignedLessOrEqual => { "u<=" },
                 };
-                format!("{} {} {}", expr1, op, expr2)
+                format!("({} {} {})", expr1, op, expr2)
             },
             intermediate::Expression::Unary(op, expr) => {
                 let expr = self.format_expression(expr);
@@ -83,7 +89,7 @@ impl<'a> Formatter<'a> {
                     intermediate::UnaryOp::Negate => { "-" },
                     intermediate::UnaryOp::LogicNot => { "!" },
                 };
-                format!("{} {}", op, expr)
+                format!("({}{})", op, expr)
             },
             intermediate::Expression::Address(expr) => {
                 let expr = self.format_expression(expr);
@@ -91,6 +97,18 @@ impl<'a> Formatter<'a> {
             },
             intermediate::Expression::Class(val) => {
                 format!("class({})", val)
+            },
+            intermediate::Expression::CallE(script_num, disp_index, params) => {
+                let params = self.format_expression_vec(params);
+                format!("callE({}, {}, {})", script_num, disp_index, params)
+            },
+            intermediate::Expression::Call(offset, params) => {
+                let params = self.format_expression_vec(params);
+                let offset = self.get_label(*offset);
+                format!("{}({})", offset, params)
+            },
+            intermediate::Expression::KCall(num, params) => {
+                self.format_kcall(*num, params)
             },
         }
     }
@@ -194,46 +212,30 @@ impl<'a> Formatter<'a> {
                 let expr = self.format_expression(expr);
                 format!("v{} = {}", n, expr)
             },
-            execute::ResultOp::CallE(script_num, disp_index, params) => {
-                let params = self.format_expression_vec(params);
-                format!("callE({}, {}, {})", script_num, disp_index, params)
-            },
-            execute::ResultOp::Call(offset, params) => {
-                let params = self.format_expression_vec(params);
-                let offset = self.get_label(*offset);
-                format!("{}({})", offset, params)
-            },
-            execute::ResultOp::KCall(num, params) => {
-                self.format_kcall(*num, params)
-            },
             execute::ResultOp::Send(dest, selector, params) => {
+                println!("RESULTOP SEND: {:?}, {:?}, {:?}", dest, selector, params);
                 let dest = self.format_expression(dest);
-                if let Some(selector) = get_expression_value(selector) {
-                    let selector_name = self.sel_vocab.get_selector_name(selector.into()).to_string();
-                    if self.class_definitions.is_certainly_propery(selector) {
-                        if params.is_empty() {
-                            format!("READ {}.{}", dest, selector_name)
-                        } else {
-                            let params = self.format_expression_vec(params);
-                            format!("{}.{} = {}", dest, selector_name, params)
-                        }
-                    } else if self.class_definitions.is_certainly_func(selector) {
-                        let params = self.format_expression_vec(params);
-                        format!("{}.{}({})", dest, selector_name, params)
-                    } else {
-                        let params = self.format_expression_vec(params);
-                        format!("send({}, {}, {}) // undecided if this is a property/function", dest, selector_name, params)
-                    }
-                } else {
-                    let selector = self.format_selector(selector);
-                    let params = self.format_expression_vec(params);
-                    format!("send({}, {}, {}) // cannot determine selector", dest, selector, params)
-                }
+                let selector = self.format_selector(selector);
+                let params = self.format_expression_vec(params);
+                format!("send({}, {}, {})", dest, selector, params)
+            },
+            execute::ResultOp::WriteSelectorValue(expr, selector, value) => {
+                let expr = self.format_expression(expr);
+                let selector = self.sel_vocab.get_selector_name((*selector).into()).to_string();
+                let value = self.format_expression(value);
+                format!("{}.{} = {}", expr, selector, value)
             },
             execute::ResultOp::Incomplete(msg) => {
                 format!("incomplete!({})", msg)
             },
-            execute::ResultOp::Return() => { "return".to_string() },
+            execute::ResultOp::Push(n, expr) => {
+                let expr = self.format_expression(expr);
+                format!("s{} = {}", n, expr)
+            },
+            execute::ResultOp::Return(expr) => {
+                let expr = self.format_expression(expr);
+                format!("return {}", expr)
+            }
         }
     }
 

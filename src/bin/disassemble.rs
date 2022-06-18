@@ -52,7 +52,7 @@ fn get_pretty_address(script: &script::Script, address: u16, labels: &LabelMap) 
 }
 
 fn disassemble_block(script: &script::Script, block: &script::ScriptBlock, labels: &LabelMap) {
-    let disasm = disassemble::Disassembler::new(&block, 0);
+    let disasm = disassemble::Disassembler::new(&block);
     for ins in disasm {
         let offset: u16 = ins.offset.try_into().unwrap();
         if let Some(label) = labels.get(&offset) {
@@ -152,7 +152,7 @@ fn generate_said_labels(saids: &said::Said, labels: &mut LabelMap) {
 }
 
 fn generate_code_labels(block: &script::ScriptBlock, labels: &mut LabelMap) {
-    let disasm = disassemble::Disassembler::new(&block, 0);
+    let disasm = disassemble::Disassembler::new(&block);
     for ins in disasm {
         if ins.bytes[0] == 0x40 || ins.bytes[0] == 0x41 { /* call */
             let j_offset = script::relpos0_to_absolute_offset(&ins);
